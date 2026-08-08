@@ -1,6 +1,6 @@
 ---
 name: rate-compliance
-description: Company policy rules for credit-card APR rates - SCRA accounts pinned at 6% regardless of repo-rate movement, and lower-of-normal-or-override always served. Use when reviewing a rate compliance report, auditing APR data after a rate deployment, or answering questions about SCRA caps, override codes, or which rate a customer should be charged.
+description: Company policy rules for credit-card APR rates - SCRA accounts pinned at 6% regardless of repo-rate movement, a 29.99% maximum APR any card member may be charged, and lower-of-normal-or-override always served. Use when reviewing a rate compliance report, auditing APR data after a rate deployment, or answering questions about SCRA caps, the maximum APR ceiling, override codes, or which rate a customer should be charged.
 ---
 
 # Rate Policy Compliance
@@ -77,7 +77,48 @@ Expected `6.00`, actual `5.70`. The account should not have moved at all.
 
 ---
 
-## Rule 2 — `LOWER_RATE_WINS`
+## Rule 2 — `MAX_APR_CAP`
+
+**No card member may be charged more than 29.99% APR.**
+
+A hard company ceiling on the effective rate, independent of product, rate type, or how the
+account got there. Unlike the SCRA cap this is policy rather than statute, but it is still an
+overcharge when breached, so it carries the same severity.
+
+| Condition | Severity | Why |
+|---|---|---|
+| effective rate **> 29.99%** | `CRITICAL` | The customer is being charged above the maximum the company permits. Direct billing defect — remediate and consider whether refunds are owed. |
+
+The cap is judged on the **effective rate only**. A normal rate above 29.99% that a lower
+override masks charges the customer the lower value, so nothing is overcharged and there is
+nothing to report.
+
+### Worked examples
+
+Compliant — sits exactly on the ceiling, which is permitted:
+```
+ACC00007 | 70 | Rate 29.99% | (none) | -> effective 29.99%   OK
+```
+
+Compliant — the normal rate is over the cap but the override is what is charged:
+```
+ACC00012 | 44 | Rate 35.00% | CMA | OverrideRate 20.00% -> effective 20.00%   OK
+```
+
+Violation after an upward portfolio adjustment pushed the rate past the ceiling:
+```
+ACC00007 | 70 | Rate 31.49% | (none) | -> effective 31.49%   CRITICAL
+```
+Expected at most `29.99`, actual `31.49`.
+
+Violation where the override is the lower rate but still breaches the cap:
+```
+ACC00018 | 61 | Rate 40.00% | CMA | OverrideRate 32.00% -> effective 32.00%   CRITICAL
+```
+
+---
+
+## Rule 3 — `LOWER_RATE_WINS`
 
 **Where an account has both a normal rate and an override rate, the lower of the two must be
 the effective rate.** An override exists to benefit the customer; it must never result in a
@@ -148,11 +189,22 @@ about them.
 *Applies to the APR platform this skill originally shipped with; ignore it if you are
 auditing a different system.*
 
-The bulk adjust endpoint (`POST /api/rates/adjust`) scales every row's effective rate,
-including SCRA overrides. It therefore knocks every SCRA account off 6.00% on each run. A
-cluster of `SCRA_FIXED_RATE` findings at `HIGH` immediately after a rate deployment almost
-always has this single root cause rather than 12 independent data problems — say so rather
-than listing each account as its own incident.
+The bulk adjust endpoint (`POST /api/rates/adjust`) has two defects, and most findings after
+a rate deployment trace back to one of them. Name the cause rather than listing each account
+as its own incident.
+
+**It scales SCRA overrides along with everything else.** SCRA accounts are supposed to be
+immune to portfolio movement, so every run knocks them off 6.00%. A cluster of
+`SCRA_FIXED_RATE` findings at `HIGH` right after a deployment is this, not 12 independent
+data problems.
+
+**It applies no ceiling.** Nothing clamps the result at 29.99%, so an upward adjustment
+pushes any account already near the top over the cap. Accounts sitting exactly on 29.99%
+breach it on *any* positive adjustment. A cluster of `MAX_APR_CAP` findings after an upward
+deployment is this single missing clamp.
+
+These are separate defects with separate fixes — an upward adjustment can produce both sets
+of findings at once, and they should not be conflated into one root cause.
 
 ## Portability
 

@@ -1,6 +1,6 @@
 ---
 name: rate-policy-sme
-description: Subject-matter expert on credit-card APR policy and compliance. Use when interpreting a rate compliance report, assessing the customer or regulatory impact of a rate deployment, or answering questions about SCRA caps, override codes, and which rate an account should be charged.
+description: Subject-matter expert on credit-card APR policy and compliance. Use when interpreting a rate compliance report, assessing the customer or regulatory impact of a rate deployment, or answering questions about SCRA caps, the 29.99% maximum APR ceiling, override codes, and which rate an account should be charged.
 tools: Read, Bash
 model: sonnet
 ---
@@ -11,7 +11,11 @@ do about them.
 
 The binding rules live in the `rate-compliance` skill at
 `.claude/skills/rate-compliance/SKILL.md`. Read it before giving an opinion; it is the source
-of truth for both rules, their severities, and the known systemic cause.
+of truth for all three rules, their severities, and the known systemic causes:
+
+- `SCRA_FIXED_RATE` — SCRA accounts pinned at exactly 6.00%, immune to portfolio movement.
+- `MAX_APR_CAP` — no card member charged above 29.99%.
+- `LOWER_RATE_WINS` — where both a normal and an override rate exist, the lower is charged.
 
 ## Getting a report
 

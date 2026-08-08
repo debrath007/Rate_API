@@ -134,6 +134,61 @@ def test_scra_without_an_override_rate_trips_both_rules(tmp_path):
     assert report["highCount"] == 1
 
 
+def test_rate_above_the_max_apr_cap_is_critical(tmp_path):
+    path = write_workbook(tmp_path / "cap.xlsx", [("ACC1", "01", 31.49, 1.0, None, None)])
+
+    found = rules(check(path), cc.RULE_MAX_APR)
+
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_CRITICAL
+    assert found[0]["expected"] == 29.99
+    assert found[0]["actual"] == 31.49
+    assert "maximum APR" in found[0]["message"]
+
+
+def test_rate_exactly_at_the_cap_is_not_flagged(tmp_path):
+    # The shipped workbook has rows sitting exactly on 29.99, so an inverted
+    # comparison here would flag real data that is perfectly compliant.
+    path = write_workbook(tmp_path / "atcap.xlsx", [("ACC1", "01", 29.99, 1.0, None, None)])
+    assert check(path)["violations"] == []
+
+
+def test_rate_a_hair_over_the_cap_is_within_tolerance(tmp_path):
+    # Two-decimal storage means anything inside EPSILON is representation noise,
+    # not a real breach.
+    path = write_workbook(tmp_path / "epsilon.xlsx", [("ACC1", "01", 29.992, 1.0, None, None)])
+    assert rules(check(path), cc.RULE_MAX_APR) == []
+
+
+def test_normal_rate_over_cap_masked_by_lower_override_is_not_flagged(tmp_path):
+    # The customer is charged 20.00%, so nothing is overcharged.
+    path = write_workbook(tmp_path / "masked.xlsx", [("ACC1", "01", 35.00, 1.0, "CMA", 20.00)])
+    assert check(path)["violations"] == []
+
+
+def test_override_above_the_cap_is_flagged_when_it_is_the_lower_rate(tmp_path):
+    # Override is lower than normal so it is charged -- but it still breaches the cap.
+    path = write_workbook(tmp_path / "ovcap.xlsx", [("ACC1", "01", 40.00, 1.0, "CMA", 32.00)])
+
+    found = rules(check(path), cc.RULE_MAX_APR)
+
+    assert len(found) == 1
+    assert found[0]["actual"] == 32.00
+
+
+def test_scra_breach_and_cap_breach_are_reported_in_rule_order(tmp_path):
+    # A SCRA row with no override falls back to a normal rate that is over the cap,
+    # tripping all three rules. Order is part of the report contract.
+    path = write_workbook(tmp_path / "all.xlsx", [("ACC1", "01", 33.00, 1.0, "SCRA", None)])
+
+    report = check(path)
+
+    assert [v["rule"] for v in report["violations"]] == [
+        cc.RULE_SCRA, cc.RULE_MAX_APR, cc.RULE_LOWER_WINS]
+    assert report["criticalCount"] == 2
+    assert report["highCount"] == 1
+
+
 def test_blank_override_code_is_ignored_even_with_a_stray_rate(tmp_path):
     path = write_workbook(tmp_path / "stray.xlsx", [("ACC1", "01", 10.00, 1.0, None, 3.00)])
     assert check(path)["violations"] == []

@@ -76,6 +76,8 @@ Full statements, severities, and worked examples are in [SKILL.md](SKILL.md).
 - **`SCRA_FIXED_RATE`** — SCRA accounts must be at exactly 6.00%. Above the cap is
   `CRITICAL` (statutory breach); below is `HIGH` (the account was moved by an adjustment
   it should be immune to).
+- **`MAX_APR_CAP`** — no card member may be charged above 29.99%. Judged on the effective
+  rate, so a high normal rate masked by a lower override is not a breach. `CRITICAL`.
 - **`LOWER_RATE_WINS`** — where both a normal and an override rate exist, the lower must
   be charged. An override code with no rate behind it is `HIGH`.
 

@@ -37,11 +37,15 @@ except ImportError:  # pragma: no cover - environment problem, not logic
 SCRA = "SCRA"
 SCRA_REQUIRED_RATE = 6.00
 
+# The most a card member may be charged, as a matter of company policy.
+MAX_APR = 29.99
+
 # Rates are held to two decimals, so compare with a tolerance. Exact float
 # equality would manufacture violations out of representation error.
 EPSILON = 0.005
 
 RULE_SCRA = "SCRA_FIXED_RATE"
+RULE_MAX_APR = "MAX_APR_CAP"
 RULE_LOWER_WINS = "LOWER_RATE_WINS"
 
 SEVERITY_CRITICAL = "CRITICAL"
@@ -185,6 +189,29 @@ def check_scra_fixed_rate(row, violations):
     })
 
 
+def check_max_apr_cap(row, violations):
+    """No card member may be charged more than 29.99% APR.
+
+    Judged on the effective rate only: a normal rate above the cap that a lower
+    override masks charges the customer the lower value, so nothing is overcharged
+    and there is nothing to report.
+    """
+    effective = row["effective"]
+    if effective - MAX_APR <= EPSILON:
+        return
+
+    violations.append({
+        "rule": RULE_MAX_APR,
+        "severity": SEVERITY_CRITICAL,
+        "accountId": row["accountId"],
+        "rateType": row["rateType"],
+        "expected": MAX_APR,
+        "actual": _round2(effective),
+        "message": (f"Effective rate is {effective:.2f}%, above the "
+                    f"{MAX_APR:.2f}% maximum APR a card member may be charged"),
+    })
+
+
 def check_lower_rate_wins(row, violations):
     """Where an override exists, the lower of the two rates must be charged."""
     code = row["overrideCode"]
@@ -276,6 +303,7 @@ def build_report(records) -> dict:
         # Order matters: it is the order findings are presented in, and matches
         # how the rules are numbered in SKILL.md.
         check_scra_fixed_rate(row, violations)
+        check_max_apr_cap(row, violations)
         check_lower_rate_wins(row, violations)
 
     critical = sum(1 for v in violations if v["severity"] == SEVERITY_CRITICAL)
