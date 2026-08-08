@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+apr:
+  excel:
+    # The pristine workbook ships as a classpath resource (src/main/resources/APR_Report.xlsx).
+    # WorkbookSeeder copies it here on first run, because the app writes to this file and
+    # classpath resources are read-only in a jar. Delete this file to reset to the shipped data.
+    path: ./data/APR_Report.xlsx
+  test-runner:
+    # Where to invoke the Gradle wrapper from. Defaults to the app's working directory,
+    # which is the project root when started via `gradlew bootRun`.
+    project-dir: ${user.dir}
+    timeout-seconds: 300
+    # Runs a build in a subprocess: keep this off anywhere that is not a developer machine.
+    enabled: true
+  agent:
+    # Shells out to the Claude CLI and consumes API tokens per run. Developer machines only.
+    enabled: true
+    cli-path: claude
+    timeout-seconds: 180
+    project-dir: ${user.dir}
+  compliance:
+    # The rules live in the portable skill bundle, not in Java. This app just runs it.
+    # 'py' rather than 'python': on Windows, plain `python` is often the Microsoft Store
+    # stub, which exits without running anything.
+    python-path: py
+    script-path: .claude/skills/rate-compliance/scripts/check_compliance.py
+    timeout-seconds: 60
+    project-dir: ${user.dir}

@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>APR Rate Console</title>
+	<style>
+		:root {
+			--bg: #f4f6fa;
+			--panel: #ffffff;
+			--ink: #1c2333;
+			--muted: #64708a;
+			--line: #dde3ee;
+			--accent: #2f5bd7;
+			--accent-ink: #ffffff;
+			--ok: #157a4a;
+			--ok-bg: #e6f5ed;
+			--bad: #b3261e;
+			--bad-bg: #fdecea;
+			--warn: #8a5a00;
+			--warn-bg: #fff4e0;
+		}
+
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			padding: 32px 20px 64px;
+			background: var(--bg);
+			color: var(--ink);
+			font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+		}
+
+		.wrap { max-width: 1000px; margin: 0 auto; }
+
+		header { margin-bottom: 28px; }
+		header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
+		header p { margin: 0; color: var(--muted); }
+
+		.panel {
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 10px;
+			padding: 20px 22px;
+			margin-bottom: 20px;
+		}
+
+		.panel h2 {
+			margin: 0 0 4px;
+			font-size: 17px;
+		}
+
+		.panel .hint {
+			margin: 0 0 16px;
+			color: var(--muted);
+			font-size: 13.5px;
+		}
+
+		.row {
+			display: flex;
+			gap: 10px;
+			flex-wrap: wrap;
+			align-items: center;
+		}
+
+		label { font-size: 13.5px; color: var(--muted); }
+
+		input, select {
+			font: inherit;
+			padding: 8px 10px;
+			border: 1px solid var(--line);
+			border-radius: 6px;
+			background: #fff;
+			color: var(--ink);
+			min-width: 160px;
+		}
+
+		input:focus, select:focus {
+			outline: 2px solid var(--accent);
+			outline-offset: -1px;
+			border-color: var(--accent);
+		}
+
+		button {
+			font: inherit;
+			font-weight: 600;
+			padding: 8px 16px;
+			border: 1px solid transparent;
+			border-radius: 6px;
+			background: var(--accent);
+			color: var(--accent-ink);
+			cursor: pointer;
+		}
+
+		button.secondary {
+			background: #fff;
+			color: var(--ink);
+			border-color: var(--line);
+		}
+
+		button:disabled { opacity: 0.55; cursor: not-allowed; }
+		button:not(:disabled):hover { filter: brightness(1.08); }
+
+		.out { margin-top: 16px; }
+		.out:empty { display: none; }
+
+		.msg {
+			padding: 10px 14px;
+			border-radius: 6px;
+			font-size: 14px;
+		}
+		.msg.ok   { background: var(--ok-bg);   color: var(--ok);   }
+		.msg.bad  { background: var(--bad-bg);  color: var(--bad);  }
+		.msg.warn { background: var(--warn-bg); color: var(--warn); }
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			margin-top: 12px;
+			font-size: 14px;
+		}
+
+		th, td {
+			text-align: left;
+			padding: 8px 10px;
+			border-bottom: 1px solid var(--line);
+		}
+
+		th {
+			font-size: 12px;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+			color: var(--muted);
+		}
+
+		td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+		.pill {
+			display: inline-block;
+			padding: 2px 9px;
+			border-radius: 100px;
+			font-size: 12px;
+			font-weight: 600;
+		}
+		.pill.passed  { background: var(--ok-bg);   color: var(--ok);   }
+		.pill.failed  { background: var(--bad-bg);  color: var(--bad);  }
+		.pill.skipped { background: var(--warn-bg); color: var(--warn); }
+		.pill.CRITICAL { background: var(--bad-bg);  color: var(--bad);  }
+		.pill.HIGH     { background: var(--warn-bg); color: var(--warn); }
+
+		.narrative {
+			margin-top: 16px;
+			padding: 16px 18px;
+			background: #f8fafd;
+			border: 1px solid var(--line);
+			border-left: 3px solid var(--accent);
+			border-radius: 6px;
+			font-size: 14px;
+			white-space: pre-wrap;
+		}
+
+		.narrative h3 {
+			margin: 0 0 10px;
+			font-size: 13px;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+			color: var(--muted);
+		}
+
+		code {
+			background: #eef1f7;
+			padding: 1px 5px;
+			border-radius: 4px;
+			font-size: 12.5px;
+		}
+
+		.summary {
+			display: flex;
+			gap: 22px;
+			flex-wrap: wrap;
+			padding: 12px 14px;
+			background: #f8fafd;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+		}
+		.summary div { font-size: 13px; color: var(--muted); }
+		.summary strong {
+			display: block;
+			font-size: 20px;
+			color: var(--ink);
+			font-variant-numeric: tabular-nums;
+		}
+
+		.suite-name {
+			margin: 20px 0 0;
+			font-size: 14px;
+			font-weight: 600;
+		}
+		.suite-name span { color: var(--muted); font-weight: 400; }
+
+		details { margin-top: 6px; }
+		summary { cursor: pointer; color: var(--bad); font-size: 13px; }
+
+		pre {
+			margin: 8px 0 0;
+			padding: 12px;
+			background: #2b2f3a;
+			color: #e6e9f0;
+			border-radius: 6px;
+			font-size: 12.5px;
+			line-height: 1.45;
+			overflow-x: auto;
+			white-space: pre;
+		}
+
+		.spinner {
+			display: inline-block;
+			width: 13px;
+			height: 13px;
+			margin-right: 7px;
+			border: 2px solid rgba(255, 255, 255, 0.4);
+			border-top-color: #fff;
+			border-radius: 50%;
+			animation: spin 0.7s linear infinite;
+			vertical-align: -2px;
+		}
+
+		@keyframes spin { to { transform: rotate(360deg); } }
+
+		@media (prefers-reduced-motion: reduce) {
+			.spinner { animation-duration: 2s; }
+		}
+	</style>
+</head>
+<body>
+<div class="wrap">
+	<header>
+		<h1>APR Rate Console</h1>
+		<p>Read and adjust credit-card APR data in <code>APR_Report.xlsx</code>.</p>
+	</header>
+
+	<!-- 1. Fetch one account -->
+	<section class="panel">
+		<h2>Account rates</h2>
+		<p class="hint">Shows the effective rate per rate type &mdash; the lower of the normal rate and any override.</p>
+		<div class="row">
+			<label for="accountId">Account ID</label>
+			<input id="accountId" value="ACC00001" placeholder="ACC00001" autocomplete="off">
+			<button id="fetchBtn">Fetch rates</button>
+		</div>
+		<div class="out" id="fetchOut"></div>
+	</section>
+
+	<!-- 2. Adjust all -->
+	<section class="panel">
+		<h2>Adjust all rates</h2>
+		<p class="hint">
+			Applies a percentage change to every account and rate type. Positive increases, negative decreases.
+			A backup is taken automatically before anything is written.
+		</p>
+		<div class="row">
+			<label for="percentage">Change (%)</label>
+			<input id="percentage" type="number" step="0.1" value="-5" style="min-width:110px">
+			<button id="adjustBtn">Apply to all accounts</button>
+		</div>
+		<div class="out" id="adjustOut"></div>
+	</section>
+
+	<!-- 3. Backups -->
+	<section class="panel">
+		<h2>Backups</h2>
+		<p class="hint">Every adjustment snapshots the workbook first. Restoring overwrites the live file with the newest snapshot.</p>
+		<div class="row">
+			<button class="secondary" id="listBackupsBtn">Refresh list</button>
+			<button id="restoreBtn">Restore latest</button>
+		</div>
+		<div class="out" id="backupOut"></div>
+	</section>
+
+	<!-- 4. Compliance -->
+	<section class="panel">
+		<h2>Rate policy compliance</h2>
+		<p class="hint">
+			Checks the workbook against company policy: SCRA accounts must sit at exactly 6.00% regardless of
+			rate deployments, and where both a normal and an override rate exist the lower must be charged.
+			The SME review adds an expert reading of the findings &mdash; it calls the Claude CLI, takes around
+			30 seconds, and consumes API tokens.
+		</p>
+		<div class="row">
+			<button id="checkComplianceBtn">Check compliance</button>
+			<button class="secondary" id="reviewBtn">Ask policy SME</button>
+		</div>
+		<div class="out" id="complianceOut"></div>
+	</section>
+
+	<!-- 5. Tests -->
+	<section class="panel">
+		<h2>Run tests</h2>
+		<p class="hint">
+			Runs the project's Gradle test task and reports each test case. Tests use their own throwaway
+			copy of the workbook, so this never touches your real data.
+		</p>
+		<div class="row">
+			<label for="scope">Scope</label>
+			<select id="scope">
+				<option value="all">All tests (unit + integration)</option>
+				<option value="unit">Unit tests only (faster)</option>
+			</select>
+			<button id="runTestsBtn">Run tests</button>
+		</div>
+		<div class="out" id="testOut"></div>
+	</section>
+</div>
+
+<script>
+	const $ = (id) => document.getElementById(id);
+
+	/** Escapes text before it goes anywhere near innerHTML. */
+	function esc(value) {
+		if (value === null || value === undefined) return '';
+		return String(value)
+			.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+	}
+
+	function msg(target, kind, text) {
+		target.innerHTML = '<div class="msg ' + kind + '">' + esc(text) + '</div>';
+	}
+
+	/** Runs an async handler with the button disabled and a spinner in place of its label. */
+	async function withBusy(button, busyLabel, handler) {
+		const original = button.textContent;
+		button.disabled = true;
+		button.innerHTML = '<span class="spinner"></span>' + esc(busyLabel);
+		try {
+			await handler();
+		} finally {
+			button.disabled = false;
+			button.textContent = original;
+		}
+	}
+
+	/** Reads a JSON body even on error responses, where the API returns a problem object. */
+	async function readJson(response) {
+		try {
+			return await response.json();
+		} catch {
+			return null;
+		}
+	}
+
+	// ---- 1. Fetch account rates -------------------------------------------------
+	async function fetchRates() {
+		const out = $('fetchOut');
+		const accountId = $('accountId').value.trim();
+		if (!accountId) {
+			msg(out, 'warn', 'Enter an account ID first.');
+			return;
+		}
+
+		const response = await fetch('/api/accounts/' + encodeURIComponent(accountId) + '/rate');
+		const body = await readJson(response);
+
+		if (response.status === 404) {
+			msg(out, 'warn', 'No rate records found for ' + accountId + '.');
+			return;
+		}
+		if (!response.ok) {
+			msg(out, 'bad', (body && body.message) || ('Request failed with status ' + response.status));
+			return;
+		}
+
+		const rows = body.rates.map((r) =>
+			'<tr><td>' + esc(r.rateType) + '</td><td class="num">' + r.rate.toFixed(2) + '%</td></tr>').join('');
+
+		out.innerHTML =
+			'<div class="msg ok">' + esc(accountId) + ' &mdash; ' + body.rates.length + ' rate type(s)</div>' +
+			'<table><thead><tr><th>Rate type</th><th style="text-align:right">Effective rate</th></tr></thead>' +
+			'<tbody>' + rows + '</tbody></table>';
+	}
+
+	// ---- 2. Adjust all rates ----------------------------------------------------
+	async function adjustRates() {
+		const out = $('adjustOut');
+		const raw = $('percentage').value.trim();
+		const percentage = Number(raw);
+
+		if (raw === '' || Number.isNaN(percentage)) {
+			msg(out, 'warn', 'Enter a numeric percentage.');
+			return;
+		}
+
+		const direction = percentage >= 0 ? 'increase' : 'decrease';
+		if (!confirm('Apply a ' + Math.abs(percentage) + '% ' + direction + ' to EVERY account and rate type?\n\n'
+			+ 'The workbook is backed up first, so this can be undone with "Restore latest".')) {
+			return;
+		}
+
+		const response = await fetch('/api/rates/adjust', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ percentage })
+		});
+		const body = await readJson(response);
+
+		if (!response.ok) {
+			msg(out, 'bad', (body && body.message) || ('Adjustment failed with status ' + response.status));
+			return;
+		}
+
+		out.innerHTML =
+			'<div class="msg ok">Updated ' + body.rowsUpdated + ' rows by ' + percentage + '%.</div>' +
+			'<p class="hint" style="margin:10px 0 0">Backed up to <code>' + esc(body.backupFile) + '</code></p>';
+		loadBackups();
+	}
+
+	// ---- 3. Backups -------------------------------------------------------------
+	async function loadBackups() {
+		const out = $('backupOut');
+		const response = await fetch('/api/backups');
+		const body = await readJson(response);
+
+		if (!response.ok) {
+			msg(out, 'bad', 'Could not list backups (status ' + response.status + ').');
+			return;
+		}
+		if (!body.backups.length) {
+			msg(out, 'warn', 'No backups yet. One is created automatically on the first adjustment.');
+			return;
+		}
+
+		const rows = body.backups
+			.map((name, i) => '<tr><td>' + esc(name) + '</td><td>' + (i === 0 ? '<span class="pill passed">latest</span>' : '') + '</td></tr>')
+			.join('');
+
+		out.innerHTML =
+			'<table><thead><tr><th>Backup file</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+	}
+
+	async function restoreLatest() {
+		const out = $('backupOut');
+		if (!confirm('Overwrite the live workbook with the most recent backup?')) return;
+
+		const response = await fetch('/api/backups/restore', { method: 'POST' });
+		const body = await readJson(response);
+
+		if (!response.ok) {
+			msg(out, 'warn', (body && body.message) || ('Restore failed with status ' + response.status));
+			return;
+		}
+		msg(out, 'ok', body.message);
+	}
+
+	// ---- 4. Compliance ----------------------------------------------------------
+	/** Renders the deterministic report. Shared by both buttons so findings look identical. */
+	function renderReport(report) {
+		if (!report.violations.length) {
+			return '<div class="msg ok">Compliant &mdash; ' + report.rowsChecked + ' rows across '
+				+ report.accountsChecked + ' accounts, no policy violations.</div>';
+		}
+
+		const rows = report.violations.map((v) =>
+			'<tr>' +
+			'<td><span class="pill ' + esc(v.severity) + '">' + esc(v.severity) + '</span></td>' +
+			'<td>' + esc(v.accountId) + '</td>' +
+			'<td>' + esc(v.rateType) + '</td>' +
+			'<td><code>' + esc(v.rule) + '</code></td>' +
+			'<td class="num">' + (v.expected === null ? '&mdash;' : v.expected.toFixed(2) + '%') + '</td>' +
+			'<td class="num">' + (v.actual === null ? '&mdash;' : v.actual.toFixed(2) + '%') + '</td>' +
+			'<td>' + esc(v.message) + '</td>' +
+			'</tr>').join('');
+
+		return '<div class="msg bad">' + report.violations.length + ' policy violation(s) &mdash; '
+			+ report.criticalCount + ' critical, ' + report.highCount + ' high &mdash; across '
+			+ report.rowsChecked + ' rows.</div>' +
+			'<table><thead><tr><th>Severity</th><th>Account</th><th>Rate type</th><th>Rule</th>' +
+			'<th style="text-align:right">Expected</th><th style="text-align:right">Actual</th>' +
+			'<th>Detail</th></tr></thead><tbody>' + rows + '</tbody></table>';
+	}
+
+	async function checkCompliance() {
+		const out = $('complianceOut');
+		const response = await fetch('/api/compliance/check');
+		const body = await readJson(response);
+
+		if (!response.ok || !body) {
+			msg(out, 'bad', 'Compliance check failed with status ' + response.status + '.');
+			return;
+		}
+		out.innerHTML = renderReport(body);
+	}
+
+	async function reviewCompliance() {
+		const out = $('complianceOut');
+		msg(out, 'warn', 'Running the policy SME agent… this usually takes around 30 seconds.');
+
+		const response = await fetch('/api/compliance/review', { method: 'POST' });
+		const body = await readJson(response);
+
+		if (!response.ok || !body) {
+			msg(out, 'bad', 'Policy review failed with status ' + response.status + '.');
+			return;
+		}
+
+		// The findings always render, even when the agent could not be reached.
+		let html = renderReport(body.report);
+
+		if (body.narrative) {
+			html += '<div class="narrative"><h3>Policy SME review'
+				+ (body.agentSeconds ? ' &middot; ' + body.agentSeconds + 's' : '') + '</h3>'
+				+ esc(body.narrative) + '</div>';
+		} else {
+			html += '<div class="msg warn" style="margin-top:14px">SME narrative unavailable: '
+				+ esc(body.agentError) + '<br>The findings above are unaffected &mdash; they are computed '
+				+ 'by the application, not the agent.</div>';
+		}
+		out.innerHTML = html;
+	}
+
+	// ---- 5. Run tests -----------------------------------------------------------
+	async function runTests() {
+		const out = $('testOut');
+		const scope = $('scope').value;
+		msg(out, 'warn', 'Running ' + (scope === 'unit' ? 'unit tests' : 'the full suite') + '… this can take up to a minute.');
+
+		const response = await fetch('/api/tests/run?scope=' + encodeURIComponent(scope), { method: 'POST' });
+		const body = await readJson(response);
+
+		if (!response.ok || !body) {
+			msg(out, 'bad', 'Test run request failed with status ' + response.status + '.');
+			return;
+		}
+		if (body.status === 'error') {
+			out.innerHTML = '<div class="msg bad">' + esc(body.message) + '</div>';
+			return;
+		}
+
+		let html =
+			'<div class="msg ' + (body.failed === 0 ? 'ok' : 'bad') + '">' + esc(body.message) + '</div>' +
+			'<div class="summary" style="margin-top:12px">' +
+			'<div><strong>' + body.total + '</strong>total</div>' +
+			'<div><strong>' + body.passed + '</strong>passed</div>' +
+			'<div><strong>' + body.failed + '</strong>failed</div>' +
+			'<div><strong>' + body.skipped + '</strong>skipped</div>' +
+			'<div><strong>' + body.durationSeconds + 's</strong>duration</div>' +
+			'</div>';
+
+		for (const suite of body.suites) {
+			const shortName = suite.className.split('.').pop();
+			html +=
+				'<p class="suite-name">' + esc(shortName) +
+				' <span>' + esc(suite.className) + ' &middot; ' + suite.timeSeconds + 's</span></p>' +
+				'<table><thead><tr><th>Test case</th><th>Status</th><th style="text-align:right">Time</th></tr></thead><tbody>';
+
+			for (const test of suite.cases) {
+				html +=
+					'<tr><td>' + esc(test.name);
+				if (test.status === 'failed' && (test.failureMessage || test.failureTrace)) {
+					html +=
+						'<details><summary>Failure details</summary>' +
+						'<pre>' + esc(test.failureTrace || test.failureMessage) + '</pre></details>';
+				}
+				html +=
+					'</td><td><span class="pill ' + esc(test.status) + '">' + esc(test.status) + '</span></td>' +
+					'<td class="num">' + test.timeSeconds + 's</td></tr>';
+			}
+			html += '</tbody></table>';
+		}
+
+		out.innerHTML = html;
+	}
+
+	// ---- Wiring -----------------------------------------------------------------
+	$('fetchBtn').addEventListener('click', () => withBusy($('fetchBtn'), 'Fetching', fetchRates));
+	$('accountId').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('fetchBtn').click(); });
+	$('adjustBtn').addEventListener('click', () => withBusy($('adjustBtn'), 'Applying', adjustRates));
+	$('listBackupsBtn').addEventListener('click', () => withBusy($('listBackupsBtn'), 'Loading', loadBackups));
+	$('restoreBtn').addEventListener('click', () => withBusy($('restoreBtn'), 'Restoring', restoreLatest));
+	$('checkComplianceBtn').addEventListener('click', () => withBusy($('checkComplianceBtn'), 'Checking', checkCompliance));
+	$('reviewBtn').addEventListener('click', () => withBusy($('reviewBtn'), 'Reviewing', reviewCompliance));
+	$('runTestsBtn').addEventListener('click', () => withBusy($('runTestsBtn'), 'Running', runTests));
+
+	loadBackups();
+</script>
+</body>
+</html>
