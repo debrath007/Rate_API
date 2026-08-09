@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,6 +46,19 @@ class AprRateControllerIT {
 		registry.add("apr.excel.path", () -> workbookCopy.toString());
 	}
 
+	/**
+	 * The workbook path is fixed for the whole class by @DynamicPropertySource, so the
+	 * repricing test would otherwise leave its mutations behind for whichever test runs
+	 * next. Restore the pristine fixture before each one.
+	 */
+	@BeforeEach
+	void resetWorkbook() throws IOException {
+		try (InputStream fixture = Objects.requireNonNull(
+				AprRateControllerIT.class.getResourceAsStream("/APR_Report_test.xlsx"))) {
+			Files.copy(fixture, workbookCopy, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
 	@Test
 	void getRate_knownAccount_returnsEffectiveRates() {
 		ResponseEntity<AccountRatesResponse> response =
@@ -65,8 +79,8 @@ class AprRateControllerIT {
 	}
 
 	@Test
-	void adjustRates_appliesPercentageAndReturnsRowsUpdated() {
-		AdjustRateRequest request = new AdjustRateRequest(-10.0);
+	void adjustRates_movesTheIndexAndReturnsRowsUpdated() {
+		AdjustRateRequest request = new AdjustRateRequest(1.0);
 
 		ResponseEntity<AdjustRateResponse> response =
 				restTemplate.postForEntity("/api/rates/adjust", request, AdjustRateResponse.class);
@@ -74,11 +88,18 @@ class AprRateControllerIT {
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody()).isNotNull();
 		assertThat(response.getBody().status()).isEqualTo("success");
-		assertThat(response.getBody().rowsUpdated()).isEqualTo(4);
+		assertThat(response.getBody().rowsUpdated()).isEqualTo(4); // the fixed row is not repriced
 
 		ResponseEntity<AccountRatesResponse> after =
 				restTemplate.getForEntity("/api/accounts/ACC00001/rate", AccountRatesResponse.class);
-		assertThat(after.getBody().rates().get(0).rate()).isEqualTo(9.00); // 10 * 0.9
-		assertThat(after.getBody().rates().get(1).rate()).isEqualTo(5.40); // 6 * 0.9
+		assertThat(after.getBody().rates().get(0).rate()).isEqualTo(11.00); // index 9.25 + margin 1.75
+	}
+
+	@Test
+	void adjustRates_missingIndexChange_returns400() {
+		ResponseEntity<String> response = restTemplate.postForEntity(
+				"/api/rates/adjust", new AdjustRateRequest(null), String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 	}
 }

@@ -48,9 +48,12 @@ EPSILON = 0.005
 
 # Rule ids, for callers that want to filter findings without hardcoding strings.
 # These name the rules shipped in rules.json; a custom rule file may define others.
-RULE_SCRA = "SCRA_FIXED_RATE"
+RULE_CODE_CEILING = "OVERRIDE_CODE_CEILING"
 RULE_MAX_APR = "MAX_APR_CAP"
+RULE_FLOOR = "RATE_FLOOR"
 RULE_LOWER_WINS = "LOWER_RATE_WINS"
+RULE_FORMULA = "RATE_MATCHES_FORMULA"
+RULE_SANITY = "RATE_SANITY"
 
 SEVERITY_CRITICAL = "CRITICAL"
 SEVERITY_HIGH = "HIGH"
@@ -73,6 +76,18 @@ COLUMN_ALIASES = {
 }
 
 REQUIRED_COLUMNS = tuple(COLUMN_ALIASES)
+
+# Columns a sheet may carry to unlock further rules. A rule whose inputs are missing
+# is skipped for that row rather than failing the run, so the same checker still
+# works against a minimal sheet that only has the required columns above.
+OPTIONAL_ALIASES = {
+    "scenario": ("scenario", "case", "testcase"),
+    "rateBasis": ("ratebasis", "basis", "ratetypebasis", "variableorfixed"),
+    "index": ("index", "indexrate", "primerate", "benchmark"),
+    "margin": ("margin", "spread"),
+    "floorRate": ("floorrate", "floor", "minrate", "aprfloor"),
+    "ceilingRate": ("ceilingrate", "ceiling", "maxrate", "aprceiling"),
+}
 
 
 class CheckError(Exception):
@@ -165,7 +180,7 @@ def resolve_columns(header_row) -> dict[str, int]:
     seen = {_normalise(cell): idx for idx, cell in enumerate(header_row)}
     resolved: dict[str, int] = {}
 
-    for logical, aliases in COLUMN_ALIASES.items():
+    for logical, aliases in {**COLUMN_ALIASES, **OPTIONAL_ALIASES}.items():
         for alias in aliases:
             if alias in seen:
                 resolved[logical] = seen[alias]
@@ -229,59 +244,132 @@ def _round2(value):
     return None if value is None else round(value + 0.0, 2)
 
 
-def check_scra_fixed_rate(row, rule, epsilon, violations):
-    """SCRA accounts must sit at exactly the rule's requiredRate.
+def _finding(row, rule, branch, expected_value, actual_value, **values):
+    """Build a violation.
 
-    Above the cap is a statutory breach. Below it costs the customer nothing but
-    proves the account was not insulated from a portfolio rate adjustment -- the
-    same failure would overcharge on the next upward move.
+    The reported figures are positional and the message placeholders arrive in
+    `values`, so a template using {expected} or {actual} cannot collide with the
+    parameters that carry those same figures into the report.
     """
-    scra_code = rule["params"]["overrideCode"]
-    required = rule["params"]["requiredRate"]
-
-    code = row["overrideCode"]
-    if not code or code.upper() != scra_code.upper():
-        return
-
-    effective = row["effective"]
-    if abs(effective - required) <= epsilon:
-        return
-
-    branch = "above" if effective > required else "below"
-
-    violations.append({
+    return {
         "rule": rule["id"],
         "severity": _severity(rule, branch),
         "accountId": row["accountId"],
         "rateType": row["rateType"],
-        "expected": required,
-        "actual": _round2(effective),
-        "message": _message(rule, branch, actual=effective, required=required),
-    })
+        "scenario": row.get("scenario"),
+        "expected": expected_value,
+        "actual": _round2(actual_value),
+        "message": _message(rule, branch, **values),
+    }
+
+
+def check_override_code_ceiling(row, rule, epsilon, violations):
+    """A protected-population override code caps what may be charged.
+
+    The cap is a ceiling, not a fixed rate: a customer whose normal formula lands
+    below it keeps the lower rate (APR-099). Where a row carries several codes, the
+    most protective ceiling governs (APR-162).
+    """
+    code = row["overrideCode"]
+    if not code:
+        return
+
+    ceilings = rule["params"]["codeCeilings"]
+    applicable = {c.strip().upper(): ceilings[c.strip().upper()]
+                  for c in code.split(",")
+                  if c.strip().upper() in ceilings}
+    if not applicable:
+        return
+
+    winner = min(applicable, key=applicable.get)
+    ceiling = applicable[winner]
+
+    effective = row["effective"]
+    if effective - ceiling <= epsilon:
+        return
+
+    violations.append(_finding(
+        row, rule, "breach", ceiling, effective,
+        actual=effective, ceiling=ceiling, code=winner))
 
 
 def check_max_apr_cap(row, rule, epsilon, violations):
-    """No card member may be charged more than the rule's maxRate.
+    """No card member may be charged above the ceiling their agreement discloses.
 
     Judged on the effective rate only: a normal rate above the cap that a lower
     override masks charges the customer the lower value, so nothing is overcharged
     and there is nothing to report.
     """
-    max_rate = rule["params"]["maxRate"]
+    max_rate = row.get("ceilingRate")
+    if max_rate is None:
+        max_rate = rule["params"].get("defaultMaxRate")
+    if max_rate is None:
+        return
 
     effective = row["effective"]
     if effective - max_rate <= epsilon:
         return
 
-    violations.append({
-        "rule": rule["id"],
-        "severity": _severity(rule, "breach"),
-        "accountId": row["accountId"],
-        "rateType": row["rateType"],
-        "expected": max_rate,
-        "actual": _round2(effective),
-        "message": _message(rule, "breach", actual=effective, max=max_rate),
-    })
+    violations.append(_finding(
+        row, rule, "breach", max_rate, effective, actual=effective, max=max_rate))
+
+
+def check_rate_floor(row, rule, epsilon, violations):
+    """A disclosed floor must hold however far the index falls.
+
+    Rows carrying an override are exempt: an override is a legitimate reason to sit
+    below the floor, so applying this there would flag every protected account.
+    """
+    floor = row.get("floorRate")
+    if floor is None or row["overrideCode"]:
+        return
+
+    effective = row["effective"]
+    if floor - effective <= epsilon:
+        return
+
+    violations.append(_finding(
+        row, rule, "breach", floor, effective, actual=effective, floor=floor))
+
+
+def check_rate_matches_formula(row, rule, epsilon, violations):
+    """A variable rate must equal index + margin at the disclosed precision.
+
+    Checked against the normal rate rather than the effective one: an override
+    changes what is charged, not how the underlying rate is derived.
+    """
+    basis = rule["params"].get("basis", "VARIABLE")
+    if (row.get("rateBasis") or "").upper() != basis.upper():
+        return
+
+    index, margin = row.get("index"), row.get("margin")
+    if index is None or margin is None:
+        return
+
+    derived = round(index + margin, rule["params"].get("precision", 2))
+    rate = row["rate"]
+    if abs(rate - derived) <= epsilon:
+        return
+
+    violations.append(_finding(
+        row, rule, "drift", _round2(derived), rate,
+        actual=rate, index=index, margin=margin, expected=derived))
+
+
+def check_rate_sanity(row, rule, epsilon, violations):
+    """A rate outside any plausible range is a data-integrity failure, not pricing."""
+    effective = row["effective"]
+    minimum = rule["params"].get("minRate", 0.0)
+    absurd = rule["params"].get("absurdRate")
+
+    if minimum - effective > epsilon:
+        violations.append(_finding(
+            row, rule, "negative", minimum, effective, actual=effective, min=minimum))
+        return
+
+    if absurd is not None and effective - absurd > epsilon:
+        violations.append(_finding(
+            row, rule, "absurd", absurd, effective, actual=effective, absurd=absurd))
 
 
 def check_lower_rate_wins(row, rule, epsilon, violations):
@@ -294,15 +382,8 @@ def check_lower_rate_wins(row, rule, epsilon, violations):
     override_rate = row["overrideRate"]
 
     if override_rate is None:
-        violations.append({
-            "rule": rule["id"],
-            "severity": _severity(rule, "missingOverrideRate"),
-            "accountId": row["accountId"],
-            "rateType": row["rateType"],
-            "expected": None,
-            "actual": _round2(rate),
-            "message": _message(rule, "missingOverrideRate", code=code, rate=rate),
-        })
+        violations.append(_finding(
+            row, rule, "missingOverrideRate", None, rate, code=code, rate=rate))
         return
 
     # Regression guard: effective_rate() takes the minimum by construction, so
@@ -311,25 +392,21 @@ def check_lower_rate_wins(row, rule, epsilon, violations):
     expected = min(rate, override_rate)
     actual = row["effective"]
     if abs(actual - expected) > epsilon:
-        violations.append({
-            "rule": rule["id"],
-            "severity": _severity(rule, "mismatch"),
-            "accountId": row["accountId"],
-            "rateType": row["rateType"],
-            "expected": _round2(expected),
-            "actual": _round2(actual),
-            "message": _message(rule, "mismatch", actual=actual, rate=rate,
-                                overrideRate=override_rate, expected=expected),
-        })
+        violations.append(_finding(
+            row, rule, "mismatch", _round2(expected), actual,
+            actual=actual, rate=rate, overrideRate=override_rate, expected=expected))
 
 
 # Maps a rule file's "check" name to the function that evaluates it. Rule files
 # select from these by name rather than carrying executable logic, so an untrusted
 # rule file can retune the policy but cannot introduce new behaviour.
 CHECKS = {
-    "scra_fixed_rate": check_scra_fixed_rate,
+    "override_code_ceiling": check_override_code_ceiling,
     "max_apr_cap": check_max_apr_cap,
+    "rate_floor": check_rate_floor,
     "lower_rate_wins": check_lower_rate_wins,
+    "rate_matches_formula": check_rate_matches_formula,
+    "rate_sanity": check_rate_sanity,
 }
 
 
@@ -355,6 +432,12 @@ def load_rows(path: str, sheet_name: str | None):
 
     columns = resolve_columns([cell.value for cell in rows[0]])
 
+    def cell_at(cells, name):
+        idx = columns.get(name)
+        if idx is None or idx >= len(cells):
+            return None
+        return cells[idx]
+
     records = []
     for cells in rows[1:]:
         account_id = read_text(cells[columns["accountId"]]) if columns["accountId"] < len(cells) else None
@@ -372,6 +455,13 @@ def load_rows(path: str, sheet_name: str | None):
             "overrideCode": override_code,
             "overrideRate": override_rate,
             "effective": effective_rate(rate, override_code, override_rate),
+            # Absent when the sheet does not carry the column; rules needing them skip.
+            "scenario": read_text(cell_at(cells, "scenario")),
+            "rateBasis": read_text(cell_at(cells, "rateBasis")),
+            "index": read_rate(cell_at(cells, "index")),
+            "margin": read_rate(cell_at(cells, "margin")),
+            "floorRate": read_rate(cell_at(cells, "floorRate")),
+            "ceilingRate": read_rate(cell_at(cells, "ceilingRate")),
         })
     return records
 

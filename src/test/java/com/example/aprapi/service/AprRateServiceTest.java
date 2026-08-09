@@ -61,15 +61,42 @@ class AprRateServiceTest {
 	}
 
 	@Test
-	void adjustAllRates_updatesOnlyTheEffectiveColumnAndLeavesTheOtherUntouched() {
-		assertThat(service.adjustAllRates(-10.0).rowsUpdated()).isEqualTo(4);
+	void adjustAllRates_repricesVariableRowsFromIndexAndMargin() {
+		// Four of the five fixture rows are variable; the fixed one is not repriced.
+		assertThat(service.adjustAllRates(1.0).rowsUpdated()).isEqualTo(4);
 
 		AccountRatesResponse acc1 = service.getRatesForAccount("ACC00001");
-		assertThat(acc1.rates().get(0).rate()).isCloseTo(9.00, within(0.001)); // 10 * 0.9, Rate column updated
-		assertThat(acc1.rates().get(1).rate()).isCloseTo(5.40, within(0.001)); // 6 * 0.9, OverrideRate column updated
+		assertThat(acc1.rates().get(0).rate()).isCloseTo(11.00, within(0.001)); // index 9.25 + margin 1.75
 
 		AccountRatesResponse acc2 = service.getRatesForAccount("ACC00002");
-		assertThat(acc2.rates().get(0).rate()).isCloseTo(7.20, within(0.001)); // 8 * 0.9, Rate column updated (override was higher, untouched)
-		assertThat(acc2.rates().get(1).rate()).isCloseTo(9.00, within(0.001)); // 10 * 0.9, OverrideRate column updated
+		assertThat(acc2.rates().get(0).rate()).isCloseTo(9.00, within(0.001)); // index 9.00 + margin 0.00, override higher
+		assertThat(acc2.rates().get(1).rate()).isCloseTo(11.00, within(0.001)); // CMA override 10.00 + 1.00
+	}
+
+	@Test
+	void adjustAllRates_leavesFixedRateRowsAlone() {
+		// APR-033: a fixed-rate account does not track the index, so an index movement
+		// must not touch it. This is the control case -- it proves a repricing run
+		// distinguishes rows that should move from rows that should not.
+		service.adjustAllRates(1.0);
+
+		assertThat(service.getRatesForAccount("ACC00003").rates().get(0).rate())
+				.isCloseTo(20.00, within(0.001));
+	}
+
+	@Test
+	void adjustAllRates_movesProtectedOverrideRates_knownDefect() {
+		// KNOWN DEFECT, asserted so it is visible rather than silent. APR-098 requires a
+		// SCRA-capped account to stay at or below 6.00% "regardless of the prime rate
+		// movement". This implementation adds the index change to every override rate,
+		// including protected ones, so the account is dragged above the statutory cap.
+		//
+		// When adjustAllRates is fixed to leave protected overrides alone, this test
+		// should fail -- invert it to expect 6.00 rather than deleting it.
+		service.adjustAllRates(1.0);
+
+		assertThat(service.getRatesForAccount("ACC00001").rates().get(1).rate())
+				.as("SCRA override should have held at 6.00 but tracked the index")
+				.isCloseTo(7.00, within(0.001));
 	}
 }

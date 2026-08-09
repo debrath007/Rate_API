@@ -8,6 +8,8 @@ public record ComplianceViolation(
 		String severity,
 		String accountId,
 		String rateType,
+		/** The case the offending row exists to exercise, e.g. SCRA_AT_CAP. */
+		String scenario,
 		Double expected,
 		Double actual,
 		String message) {

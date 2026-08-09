@@ -60,6 +60,24 @@ One row per (account, rate type), with a header row. Required columns, matched *
 A missing column exits `2` and tells you which one, listing the headers it did find. It
 will not guess.
 
+### Optional columns
+
+Carry these and further rules switch on. A rule whose inputs are absent is skipped for
+that row rather than failing the run, so the same checker still works against a sheet
+that only has the required columns above.
+
+| Logical column | Accepted headers | Unlocks |
+|---|---|---|
+| `scenario` | Scenario, Case, TestCase | names the case each finding came from |
+| `rateBasis` | RateBasis, Basis | `RATE_MATCHES_FORMULA` |
+| `index` | Index, IndexRate, PrimeRate, Benchmark | `RATE_MATCHES_FORMULA` |
+| `margin` | Margin, Spread | `RATE_MATCHES_FORMULA` |
+| `floorRate` | FloorRate, Floor, MinRate | `RATE_FLOOR` |
+| `ceilingRate` | CeilingRate, Ceiling, MaxRate | per-account `MAX_APR_CAP` |
+
+With `ceilingRate` present the cap is read per row, so each account is judged against the
+ceiling its own agreement discloses rather than one global number.
+
 ### How rates are read
 
 A cell formatted as a percentage stores `0.06` for 6%; a plain-number column may store
@@ -72,15 +90,22 @@ magnitude heuristic was deliberately avoided: it would misread a genuine 0.5% ra
 
 ## The rules
 
-Full statements, severities, and worked examples are in [SKILL.md](SKILL.md).
+Full statements, severities, and worked examples are in [SKILL.md](SKILL.md). Each rule
+in `rules.json` carries a `requirements` list naming the APR product requirements it
+implements, so a finding traces back to the requirement that motivated it.
 
-- **`SCRA_FIXED_RATE`** — SCRA accounts must be at exactly 6.00%. Above the cap is
-  `CRITICAL` (statutory breach); below is `HIGH` (the account was moved by an adjustment
-  it should be immune to).
-- **`MAX_APR_CAP`** — no card member may be charged above 29.99%. Judged on the effective
-  rate, so a high normal rate masked by a lower override is not a breach. `CRITICAL`.
-- **`LOWER_RATE_WINS`** — where both a normal and an override rate exist, the lower must
-  be charged. An override code with no rate behind it is `HIGH`.
+| Rule | Statement | Severity |
+|---|---|---|
+| `OVERRIDE_CODE_CEILING` | A protected-population code caps the rate: SCRA 6.00%, MLA 36.00%. A **ceiling, not a fixed rate** — landing below it is compliant. Most protective code wins. | `CRITICAL` |
+| `MAX_APR_CAP` | No account charged above its own disclosed ceiling. | `CRITICAL` |
+| `RATE_FLOOR` | A variable rate is clamped at its disclosed floor. Overridden rows exempt. | `HIGH` |
+| `LOWER_RATE_WINS` | Where both a normal and an override rate exist, the lower is charged. | `CRITICAL` / `HIGH` |
+| `RATE_MATCHES_FORMULA` | A variable rate equals `Index + Margin` at the disclosed precision. | `HIGH` |
+| `RATE_SANITY` | No negative or absurd rate reaches the rate table. | `CRITICAL` |
+
+All are judged on the **effective rate** — what the customer is actually charged — except
+`RATE_MATCHES_FORMULA`, which checks the normal rate, since an override changes what is
+charged rather than how the underlying rate is derived.
 
 Rates are compared with a tolerance of `0.005` because values are held to two decimals.
 

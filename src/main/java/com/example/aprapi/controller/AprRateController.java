@@ -27,6 +27,6 @@ public class AprRateController {
 
 	@PostMapping("/api/rates/adjust")
 	public AdjustRateResponse adjustRates(@Valid @RequestBody AdjustRateRequest request) {
-		return aprRateService.adjustAllRates(request.percentage());
+		return aprRateService.adjustAllRates(request.indexChange());
 	}
 }

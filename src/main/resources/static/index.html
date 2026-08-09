@@ -245,7 +245,7 @@
 		<p class="hint">Shows the effective rate per rate type &mdash; the lower of the normal rate and any override.</p>
 		<div class="row">
 			<label for="accountId">Account ID</label>
-			<input id="accountId" value="ACC00001" placeholder="ACC00001" autocomplete="off">
+			<input id="accountId" value="ACC005" placeholder="ACC005" autocomplete="off">
 			<button id="fetchBtn">Fetch rates</button>
 		</div>
 		<div class="out" id="fetchOut"></div>
@@ -253,15 +253,17 @@
 
 	<!-- 2. Adjust all -->
 	<section class="panel">
-		<h2>Adjust all rates</h2>
+		<h2>Move the benchmark index</h2>
 		<p class="hint">
-			Applies a percentage change to every account and rate type. Positive increases, negative decreases.
-			A backup is taken automatically before anything is written.
+			Simulates a prime-rate movement. Variable-rate accounts are repriced from their own
+			index and margin; fixed-rate accounts do not track the index and are left alone.
+			Positive raises the index, negative cuts it. A backup is taken automatically before
+			anything is written.
 		</p>
 		<div class="row">
-			<label for="percentage">Change (%)</label>
-			<input id="percentage" type="number" step="0.1" value="-5" style="min-width:110px">
-			<button id="adjustBtn">Apply to all accounts</button>
+			<label for="indexChange">Index change (points)</label>
+			<input id="indexChange" type="number" step="0.25" value="0.5" style="min-width:110px">
+			<button id="adjustBtn">Reprice portfolio</button>
 		</div>
 		<div class="out" id="adjustOut"></div>
 	</section>
@@ -281,10 +283,11 @@
 	<section class="panel">
 		<h2>Rate policy compliance</h2>
 		<p class="hint">
-			Checks the workbook against company policy: SCRA accounts must sit at exactly 6.00% regardless of
-			rate deployments, and where both a normal and an override rate exist the lower must be charged.
-			The SME review adds an expert reading of the findings &mdash; it calls the Claude CLI, takes around
-			30 seconds, and consumes API tokens.
+			Checks the workbook against six policy rules: statutory ceilings for protected accounts
+			(SCRA 6.00%, MLA 36.00%), each account's own disclosed floor and ceiling, lower-of-normal-or-override,
+			rate derived from index plus margin, and a sanity range. The rules live in
+			<code>rules.json</code>. The SME review adds an expert reading of the findings &mdash; it calls the
+			Claude CLI, takes around 30 seconds, and consumes API tokens.
 		</p>
 		<div class="row">
 			<button id="checkComplianceBtn">Check compliance</button>
@@ -371,27 +374,30 @@
 		}
 
 		const rows = body.rates.map((r) =>
-			'<tr><td>' + esc(r.rateType) + '</td><td class="num">' + r.rate.toFixed(2) + '%</td></tr>').join('');
+			'<tr><td>' + esc(r.rateType) + '</td><td>' + esc(r.scenario || '') + '</td>'
+			+ '<td class="num">' + r.rate.toFixed(2) + '%</td></tr>').join('');
 
 		out.innerHTML =
 			'<div class="msg ok">' + esc(accountId) + ' &mdash; ' + body.rates.length + ' rate type(s)</div>' +
-			'<table><thead><tr><th>Rate type</th><th style="text-align:right">Effective rate</th></tr></thead>' +
+			'<table><thead><tr><th>Rate type</th><th>Scenario</th>'
+			+ '<th style="text-align:right">Effective rate</th></tr></thead>' +
 			'<tbody>' + rows + '</tbody></table>';
 	}
 
-	// ---- 2. Adjust all rates ----------------------------------------------------
+	// ---- 2. Move the benchmark index --------------------------------------------
 	async function adjustRates() {
 		const out = $('adjustOut');
-		const raw = $('percentage').value.trim();
-		const percentage = Number(raw);
+		const raw = $('indexChange').value.trim();
+		const indexChange = Number(raw);
 
-		if (raw === '' || Number.isNaN(percentage)) {
-			msg(out, 'warn', 'Enter a numeric percentage.');
+		if (raw === '' || Number.isNaN(indexChange)) {
+			msg(out, 'warn', 'Enter a numeric index change, in points.');
 			return;
 		}
 
-		const direction = percentage >= 0 ? 'increase' : 'decrease';
-		if (!confirm('Apply a ' + Math.abs(percentage) + '% ' + direction + ' to EVERY account and rate type?\n\n'
+		const direction = indexChange >= 0 ? 'rise' : 'cut';
+		if (!confirm('Apply a ' + Math.abs(indexChange) + ' point index ' + direction
+			+ ' and reprice every variable-rate account?\n\n'
 			+ 'The workbook is backed up first, so this can be undone with "Restore latest".')) {
 			return;
 		}
@@ -399,7 +405,7 @@
 		const response = await fetch('/api/rates/adjust', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ percentage })
+			body: JSON.stringify({ indexChange })
 		});
 		const body = await readJson(response);
 
@@ -409,7 +415,8 @@
 		}
 
 		out.innerHTML =
-			'<div class="msg ok">Updated ' + body.rowsUpdated + ' rows by ' + percentage + '%.</div>' +
+			'<div class="msg ok">Repriced ' + body.rowsUpdated + ' variable-rate rows, index '
+			+ (indexChange >= 0 ? '+' : '') + indexChange + ' points.</div>' +
 			'<p class="hint" style="margin:10px 0 0">Backed up to <code>' + esc(body.backupFile) + '</code></p>';
 		loadBackups();
 	}
