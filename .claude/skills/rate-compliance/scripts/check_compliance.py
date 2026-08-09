@@ -6,15 +6,19 @@ whole skill folder it lives in) anywhere and point it at a workbook.
 
     python check_compliance.py --file APR_Report.xlsx
     python check_compliance.py --file APR_Report.xlsx --format text
+    python check_compliance.py --file APR_Report.xlsx --rules my_rules.json
 
 Exit codes:
     0  compliant
     1  violations found
-    2  could not run (missing file, missing column, unreadable sheet)
+    2  could not run (missing file, missing column, unreadable sheet, bad rule file)
 
 The 0/1 split makes this usable directly as a CI gate.
 
 The policy itself is documented in ../SKILL.md; this script is its executable form.
+Thresholds, severities and messages are not hardcoded here -- they are read from
+../rules.json, so the policy can be retuned without editing this file. This module
+supplies the evaluation logic; that file supplies everything the policy decides.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import argparse
 import json
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 try:
     from openpyxl import load_workbook
@@ -32,18 +37,17 @@ except ImportError:  # pragma: no cover - environment problem, not logic
     sys.exit(2)
 
 
-# --- Policy constants --------------------------------------------------------
+# --- Rule file ---------------------------------------------------------------
 
-SCRA = "SCRA"
-SCRA_REQUIRED_RATE = 6.00
+# The rules live beside the skill's SKILL.md, one level up from scripts/, so that
+# the policy sits at the top of the bundle rather than buried in the code folder.
+DEFAULT_RULES_FILE = Path(__file__).resolve().parent.parent / "rules.json"
 
-# The most a card member may be charged, as a matter of company policy.
-MAX_APR = 29.99
-
-# Rates are held to two decimals, so compare with a tolerance. Exact float
-# equality would manufacture violations out of representation error.
+# Fallback tolerance, used only when the rule file omits "epsilon".
 EPSILON = 0.005
 
+# Rule ids, for callers that want to filter findings without hardcoding strings.
+# These name the rules shipped in rules.json; a custom rule file may define others.
 RULE_SCRA = "SCRA_FIXED_RATE"
 RULE_MAX_APR = "MAX_APR_CAP"
 RULE_LOWER_WINS = "LOWER_RATE_WINS"
@@ -73,6 +77,77 @@ REQUIRED_COLUMNS = tuple(COLUMN_ALIASES)
 
 class CheckError(Exception):
     """Something made the check impossible to run. Distinct from a violation."""
+
+
+def load_rules(path=None) -> dict:
+    """Read and validate the rule file.
+
+    A malformed rule file is a CheckError, not a violation: the run could not be
+    performed, so it exits 2 rather than reporting a clean sheet. Silently falling
+    back to built-in defaults would be worse -- an edit with a typo in it would
+    look like it had taken effect.
+    """
+    rules_path = Path(path) if path else DEFAULT_RULES_FILE
+    try:
+        with open(rules_path, encoding="utf-8") as handle:
+            document = json.load(handle)
+    except FileNotFoundError as exc:
+        raise CheckError(f"rule file not found: {rules_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise CheckError(f"could not parse rule file {rules_path}: {exc}") from exc
+    except OSError as exc:
+        raise CheckError(f"could not read rule file {rules_path}: {exc}") from exc
+
+    if not isinstance(document, dict) or not isinstance(document.get("rules"), list):
+        raise CheckError(f"rule file {rules_path} must be an object with a 'rules' array")
+
+    seen = set()
+    for index, rule in enumerate(document["rules"]):
+        where = f"rule {index} in {rules_path}"
+        if not isinstance(rule, dict):
+            raise CheckError(f"{where} is not an object")
+
+        rule_id = rule.get("id")
+        if not rule_id:
+            raise CheckError(f"{where} has no 'id'")
+        if rule_id in seen:
+            raise CheckError(f"duplicate rule id {rule_id!r} in {rules_path}")
+        seen.add(rule_id)
+
+        check = rule.get("check")
+        if check not in CHECKS:
+            raise CheckError(
+                f"rule {rule_id!r} names unknown check {check!r}. "
+                f"Known checks: {', '.join(sorted(CHECKS))}")
+
+        for section in ("severity", "messages"):
+            if not isinstance(rule.get(section), dict):
+                raise CheckError(f"rule {rule_id!r} has no '{section}' object")
+        rule.setdefault("params", {})
+
+    return document
+
+
+def active_rules(ruleset: dict) -> list:
+    """Rules to evaluate, in file order -- which is the order findings appear in."""
+    return [rule for rule in ruleset["rules"] if rule.get("enabled", True)]
+
+
+def _severity(rule, key):
+    try:
+        return rule["severity"][key]
+    except KeyError as exc:
+        raise CheckError(
+            f"rule {rule['id']!r} is missing severity {key!r}") from exc
+
+
+def _message(rule, key, **values):
+    try:
+        return rule["messages"][key].format(**values)
+    except KeyError as exc:
+        raise CheckError(
+            f"rule {rule['id']!r} has a bad message template for {key!r}: "
+            f"unknown placeholder {exc}") from exc
 
 
 def _normalise(header) -> str:
@@ -154,65 +229,62 @@ def _round2(value):
     return None if value is None else round(value + 0.0, 2)
 
 
-def check_scra_fixed_rate(row, violations):
-    """SCRA accounts must sit at exactly 6.00%.
+def check_scra_fixed_rate(row, rule, epsilon, violations):
+    """SCRA accounts must sit at exactly the rule's requiredRate.
 
     Above the cap is a statutory breach. Below it costs the customer nothing but
     proves the account was not insulated from a portfolio rate adjustment -- the
     same failure would overcharge on the next upward move.
     """
+    scra_code = rule["params"]["overrideCode"]
+    required = rule["params"]["requiredRate"]
+
     code = row["overrideCode"]
-    if not code or code.upper() != SCRA:
+    if not code or code.upper() != scra_code.upper():
         return
 
     effective = row["effective"]
-    if abs(effective - SCRA_REQUIRED_RATE) <= EPSILON:
+    if abs(effective - required) <= epsilon:
         return
 
-    above_cap = effective > SCRA_REQUIRED_RATE
-    if above_cap:
-        message = (f"SCRA account effective rate is {effective:.2f}%, "
-                   f"above the 6.00% statutory cap")
-    else:
-        message = (f"SCRA account effective rate is {effective:.2f}%, "
-                   f"expected exactly 6.00% (account was moved by a rate "
-                   f"adjustment it should be immune to)")
+    branch = "above" if effective > required else "below"
 
     violations.append({
-        "rule": RULE_SCRA,
-        "severity": SEVERITY_CRITICAL if above_cap else SEVERITY_HIGH,
+        "rule": rule["id"],
+        "severity": _severity(rule, branch),
         "accountId": row["accountId"],
         "rateType": row["rateType"],
-        "expected": SCRA_REQUIRED_RATE,
+        "expected": required,
         "actual": _round2(effective),
-        "message": message,
+        "message": _message(rule, branch, actual=effective, required=required),
     })
 
 
-def check_max_apr_cap(row, violations):
-    """No card member may be charged more than 29.99% APR.
+def check_max_apr_cap(row, rule, epsilon, violations):
+    """No card member may be charged more than the rule's maxRate.
 
     Judged on the effective rate only: a normal rate above the cap that a lower
     override masks charges the customer the lower value, so nothing is overcharged
     and there is nothing to report.
     """
+    max_rate = rule["params"]["maxRate"]
+
     effective = row["effective"]
-    if effective - MAX_APR <= EPSILON:
+    if effective - max_rate <= epsilon:
         return
 
     violations.append({
-        "rule": RULE_MAX_APR,
-        "severity": SEVERITY_CRITICAL,
+        "rule": rule["id"],
+        "severity": _severity(rule, "breach"),
         "accountId": row["accountId"],
         "rateType": row["rateType"],
-        "expected": MAX_APR,
+        "expected": max_rate,
         "actual": _round2(effective),
-        "message": (f"Effective rate is {effective:.2f}%, above the "
-                    f"{MAX_APR:.2f}% maximum APR a card member may be charged"),
+        "message": _message(rule, "breach", actual=effective, max=max_rate),
     })
 
 
-def check_lower_rate_wins(row, violations):
+def check_lower_rate_wins(row, rule, epsilon, violations):
     """Where an override exists, the lower of the two rates must be charged."""
     code = row["overrideCode"]
     if not code:
@@ -223,15 +295,13 @@ def check_lower_rate_wins(row, violations):
 
     if override_rate is None:
         violations.append({
-            "rule": RULE_LOWER_WINS,
-            "severity": SEVERITY_HIGH,
+            "rule": rule["id"],
+            "severity": _severity(rule, "missingOverrideRate"),
             "accountId": row["accountId"],
             "rateType": row["rateType"],
             "expected": None,
             "actual": _round2(rate),
-            "message": (f"Override code {code} is set but no override rate is "
-                        f"present, so the full normal rate of {rate:.2f}% is "
-                        f"being charged"),
+            "message": _message(rule, "missingOverrideRate", code=code, rate=rate),
         })
         return
 
@@ -240,18 +310,27 @@ def check_lower_rate_wins(row, violations):
     # served rate disagrees with the policy.
     expected = min(rate, override_rate)
     actual = row["effective"]
-    if abs(actual - expected) > EPSILON:
+    if abs(actual - expected) > epsilon:
         violations.append({
-            "rule": RULE_LOWER_WINS,
-            "severity": SEVERITY_CRITICAL,
+            "rule": rule["id"],
+            "severity": _severity(rule, "mismatch"),
             "accountId": row["accountId"],
             "rateType": row["rateType"],
             "expected": _round2(expected),
             "actual": _round2(actual),
-            "message": (f"Effective rate is {actual:.2f}% but the lower of normal "
-                        f"({rate:.2f}%) and override ({override_rate:.2f}%) is "
-                        f"{expected:.2f}%"),
+            "message": _message(rule, "mismatch", actual=actual, rate=rate,
+                                overrideRate=override_rate, expected=expected),
         })
+
+
+# Maps a rule file's "check" name to the function that evaluates it. Rule files
+# select from these by name rather than carrying executable logic, so an untrusted
+# rule file can retune the policy but cannot introduce new behaviour.
+CHECKS = {
+    "scra_fixed_rate": check_scra_fixed_rate,
+    "max_apr_cap": check_max_apr_cap,
+    "lower_rate_wins": check_lower_rate_wins,
+}
 
 
 # --- Reading and reporting ---------------------------------------------------
@@ -297,14 +376,22 @@ def load_rows(path: str, sheet_name: str | None):
     return records
 
 
-def build_report(records) -> dict:
+def build_report(records, ruleset=None) -> dict:
+    """Evaluate every record against every enabled rule.
+
+    ruleset defaults to the bundled rules.json, so callers that do not care which
+    policy is in force can keep calling this with just the records.
+    """
+    ruleset = ruleset if ruleset is not None else load_rules()
+    epsilon = ruleset.get("epsilon", EPSILON)
+    rules = active_rules(ruleset)
+
     violations: list[dict] = []
     for row in records:
-        # Order matters: it is the order findings are presented in, and matches
-        # how the rules are numbered in SKILL.md.
-        check_scra_fixed_rate(row, violations)
-        check_max_apr_cap(row, violations)
-        check_lower_rate_wins(row, violations)
+        # Rule order comes from the file: it is the order findings are presented
+        # in, and matches how the rules are numbered in SKILL.md.
+        for rule in rules:
+            CHECKS[rule["check"]](row, rule, epsilon, violations)
 
     critical = sum(1 for v in violations if v["severity"] == SEVERITY_CRITICAL)
 
@@ -317,6 +404,8 @@ def build_report(records) -> dict:
         "highCount": len(violations) - critical,
         "violations": violations,
         "compliant": not violations,
+        "rulesVersion": ruleset.get("version"),
+        "rulesApplied": [rule["id"] for rule in rules],
     }
 
 
@@ -353,11 +442,14 @@ def main(argv=None) -> int:
                         help="sheet name (default: the first sheet)")
     parser.add_argument("--format", choices=("json", "text"), default="json",
                         help="output format (default: json)")
+    parser.add_argument("--rules", default=None,
+                        help=f"path to the rule file (default: {DEFAULT_RULES_FILE})")
     args = parser.parse_args(argv)
 
     try:
+        ruleset = load_rules(args.rules)
         records = load_rows(args.file, args.sheet)
-        report = build_report(records)
+        report = build_report(records, ruleset)
     except CheckError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR

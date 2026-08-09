@@ -1,0 +1,60 @@
+{
+  "version": "1.0",
+  "policy": "Credit-card APR rate policy",
+  "description": "Thresholds, severities and messages for the rate-compliance checks. This file is the source of truth for the policy; check_compliance.py supplies the evaluation logic and reads everything else from here. Edit values here rather than in the script.",
+  "epsilon": 0.005,
+  "epsilonComment": "Rates are held to two decimals, so compare with a tolerance. Exact float equality would manufacture violations out of representation error.",
+  "rules": [
+    {
+      "id": "SCRA_FIXED_RATE",
+      "enabled": true,
+      "check": "scra_fixed_rate",
+      "title": "SCRA accounts pinned at the required rate",
+      "description": "An account with the SCRA override code must have an effective rate of exactly requiredRate, and must be immune to portfolio rate movement. Above the rate is a statutory breach; below it means the account was moved by an adjustment it should have been insulated from.",
+      "params": {
+        "overrideCode": "SCRA",
+        "requiredRate": 6.0
+      },
+      "severity": {
+        "above": "CRITICAL",
+        "below": "HIGH"
+      },
+      "messages": {
+        "above": "SCRA account effective rate is {actual:.2f}%, above the {required:.2f}% statutory cap",
+        "below": "SCRA account effective rate is {actual:.2f}%, expected exactly {required:.2f}% (account was moved by a rate adjustment it should be immune to)"
+      }
+    },
+    {
+      "id": "MAX_APR_CAP",
+      "enabled": true,
+      "check": "max_apr_cap",
+      "title": "Maximum APR ceiling",
+      "description": "No card member may be charged more than maxRate. Judged on the effective rate only, so a normal rate above the cap that a lower override masks is not a breach.",
+      "params": {
+        "maxRate": 29.99
+      },
+      "severity": {
+        "breach": "CRITICAL"
+      },
+      "messages": {
+        "breach": "Effective rate is {actual:.2f}%, above the {max:.2f}% maximum APR a card member may be charged"
+      }
+    },
+    {
+      "id": "LOWER_RATE_WINS",
+      "enabled": true,
+      "check": "lower_rate_wins",
+      "title": "Lower of normal and override is charged",
+      "description": "Where an account has both a normal rate and an override rate, the lower of the two must be the effective rate. An override code declared with no rate behind it means the customer falls back to the full normal rate.",
+      "params": {},
+      "severity": {
+        "mismatch": "CRITICAL",
+        "missingOverrideRate": "HIGH"
+      },
+      "messages": {
+        "mismatch": "Effective rate is {actual:.2f}% but the lower of normal ({rate:.2f}%) and override ({overrideRate:.2f}%) is {expected:.2f}%",
+        "missingOverrideRate": "Override code {code} is set but no override rate is present, so the full normal rate of {rate:.2f}% is being charged"
+      }
+    }
+  ]
+}

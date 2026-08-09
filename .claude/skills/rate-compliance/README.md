@@ -10,7 +10,8 @@ currently ships with.
 rate-compliance/
   SKILL.md                        the policy, and how the agent should apply it
   README.md                       this file
-  scripts/check_compliance.py     the rules, executable
+  rules.json                      thresholds, severities and messages -- the tunable policy
+  scripts/check_compliance.py     the evaluation logic
   scripts/test_check_compliance.py
 ```
 
@@ -82,6 +83,48 @@ Full statements, severities, and worked examples are in [SKILL.md](SKILL.md).
   be charged. An override code with no rate behind it is `HIGH`.
 
 Rates are compared with a tolerance of `0.005` because values are held to two decimals.
+
+### Changing the policy
+
+Those numbers are **not** in the script. They live in [rules.json](rules.json), which is
+read at every run:
+
+```jsonc
+{
+  "epsilon": 0.005,
+  "rules": [
+    {
+      "id": "SCRA_FIXED_RATE",
+      "enabled": true,
+      "check": "scra_fixed_rate",         // selects the evaluator, see below
+      "params":   { "overrideCode": "SCRA", "requiredRate": 6.0 },
+      "severity": { "above": "CRITICAL", "below": "HIGH" },
+      "messages": { "above": "...{actual:.2f}...", "below": "..." }
+    }
+  ]
+}
+```
+
+| To do this | Edit |
+|---|---|
+| Retune a threshold | `params` (e.g. `maxRate`, `requiredRate`) |
+| Re-grade a finding | `severity` |
+| Reword a finding | `messages` — `{}` placeholders are filled per rule |
+| Turn a rule off | `"enabled": false` |
+| Reorder findings | move the rule in the `rules` array |
+| Point at a different policy | `--rules /path/to/other.json` |
+
+`check` selects one of the evaluators defined in the script — `scra_fixed_rate`,
+`max_apr_cap`, `lower_rate_wins`. A rule file names an evaluator; it never carries
+executable logic, so it can retune the policy but cannot introduce new behaviour. An
+unknown name fails with the list of valid ones.
+
+A missing, malformed, or invalid rule file exits `2` — the same as any other reason the
+check could not run. It never silently falls back to built-in defaults, because a typo in
+an edit would then look like it had taken effect.
+
+Each report echoes `rulesVersion` and `rulesApplied` so a stored result records which
+policy produced it.
 
 ## Output
 

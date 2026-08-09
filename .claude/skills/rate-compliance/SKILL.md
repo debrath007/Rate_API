@@ -21,6 +21,12 @@ compliant, `1` means violations were found (both are normal outcomes — read st
 `2` means it could not run, in which case stderr says why. `--format text` gives a
 human-readable rendering instead.
 
+The thresholds and severities below are held in `rules.json` beside this file and read at
+every run, so a report reflects whatever that file said at the time. Every report echoes
+`rulesVersion` and `rulesApplied`; if either differs from what this document describes,
+**the report is authoritative and this document is stale** — say so rather than reasoning
+from the numbers written here.
+
 **You were handed a report already** — interpret it as given. Do not re-run the checker
 and do not recompute anything.
 
