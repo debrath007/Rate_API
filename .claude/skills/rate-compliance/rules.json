@@ -1,8 +1,10 @@
 {
-  "version": "2.0",
+  "version": "3.0",
   "policy": "Credit-card APR rate policy",
   "description": "Thresholds, severities and messages for the rate-compliance checks. This file is the source of truth for the policy; check_compliance.py supplies the evaluation logic and reads everything else from here. Each rule cites the APR product requirements it implements.",
   "epsilon": 0.005,
+  "asOfDate": "2026-08-09",
+  "asOfDateComment": "Date the sheet is judged against, for rules that compare against expiry and protection dates. Pinned rather than taken from the clock so a report is reproducible.",
   "epsilonComment": "Rates are held to two decimals, so compare with a tolerance. Exact float equality would manufacture violations out of representation error.",
   "rules": [
     {
@@ -110,6 +112,134 @@
       "messages": {
         "negative": "Effective rate is {actual:.2f}%, below the minimum plausible rate of {min:.2f}%",
         "absurd": "Effective rate is {actual:.2f}%, beyond the {absurd:.2f}% sanity ceiling - suspect a bad index value"
+      }
+    },
+    {
+      "id": "CONSISTENT_DAY_COUNT",
+      "enabled": true,
+      "check": "config_matches",
+      "title": "Day-count divisor is uniform across the portfolio",
+      "requirements": ["APR-041"],
+      "description": "Interest must be computed on one day-count basis. A 360-day divisor where 365 was disclosed overcharges every day of every cycle, and the discrepancy is invisible in any single account.",
+      "params": {
+        "field": "dayCountBasis",
+        "expected": "365"
+      },
+      "severity": {
+        "mismatch": "CRITICAL"
+      },
+      "messages": {
+        "mismatch": "Day-count basis is {got}, but policy computes interest on {want}"
+      }
+    },
+    {
+      "id": "CONSISTENT_COMPOUNDING",
+      "enabled": true,
+      "check": "config_matches",
+      "title": "Compounding frequency is uniform across the portfolio",
+      "requirements": ["APR-046"],
+      "description": "Interest-on-interest frequency must match what was disclosed. An account compounding daily where monthly was disclosed accrues more than the customer agreed to.",
+      "params": {
+        "field": "compoundingFrequency",
+        "expected": "DAILY"
+      },
+      "severity": {
+        "mismatch": "CRITICAL"
+      },
+      "messages": {
+        "mismatch": "Compounding frequency is {got}, but policy discloses {want}"
+      }
+    },
+    {
+      "id": "CONSISTENT_ROUNDING",
+      "enabled": true,
+      "check": "config_matches",
+      "title": "Rounding rule is uniform across the portfolio",
+      "requirements": ["APR-043", "APR-048"],
+      "description": "Half-up and half-even rounding diverge by a penny per cycle in one direction only, which accumulates across a portfolio into a systematic bias rather than noise.",
+      "params": {
+        "field": "roundingRule",
+        "expected": "HALF_UP"
+      },
+      "severity": {
+        "mismatch": "HIGH"
+      },
+      "messages": {
+        "mismatch": "Rounding rule is {got}, but policy rounds {want}"
+      }
+    },
+    {
+      "id": "OVERRIDE_NOT_EXPIRED",
+      "enabled": true,
+      "check": "override_not_expired",
+      "title": "Expired overrides have reverted",
+      "requirements": ["APR-088", "APR-094"],
+      "description": "A temporary rate arrangement must revert on its expiry date to whatever legitimately applies then. An override still in force past its expiry is a rate nobody re-authorised.",
+      "params": {},
+      "severity": {
+        "expired": "HIGH"
+      },
+      "messages": {
+        "expired": "Override {code} expired on {expiry} but is still applied as of {asOf}"
+      }
+    },
+    {
+      "id": "PROTECTION_DATES_VALID",
+      "enabled": true,
+      "check": "protection_dates_valid",
+      "title": "Protected-population caps have a valid protection period",
+      "requirements": ["APR-103", "APR-105"],
+      "description": "A statutory cap needs an evidenced protection period. No start date means the cap cannot be substantiated; a cap still applied after the period ended means the reversion never ran.",
+      "params": {
+        "protectedCodes": ["SCRA", "MLA"]
+      },
+      "severity": {
+        "missingStart": "HIGH",
+        "endedButApplied": "HIGH"
+      },
+      "messages": {
+        "missingStart": "{code} cap is applied but no protection start date is recorded",
+        "endedButApplied": "{code} protection ended on {end} but the cap is still applied as of {asOf}"
+      }
+    },
+    {
+      "id": "PRE_SERVICE_DEBT_SCOPE",
+      "enabled": true,
+      "check": "pre_service_debt_scope",
+      "title": "Statutory caps apply to pre-service debt only",
+      "requirements": ["APR-100"],
+      "description": "The SCRA cap covers obligations incurred before active duty began. Applying it to balances opened after activation extends the protection beyond what the statute grants.",
+      "params": {
+        "protectedCodes": ["SCRA"]
+      },
+      "severity": {
+        "postActivation": "HIGH"
+      },
+      "messages": {
+        "postActivation": "{code} cap is applied to debt originated {origination}, on or after protection began {start}"
+      }
+    },
+    {
+      "id": "BOUNDS_WITHIN_PRODUCT_RANGE",
+      "enabled": true,
+      "check": "bounds_within_product_range",
+      "title": "Account bounds sit inside the product's disclosed range",
+      "requirements": ["APR-073", "APR-112"],
+      "description": "The rate range marketed for a product must bound every rate the system can assign under it. An account configured outside that range can be charged a rate that was never disclosed to them.",
+      "params": {
+        "productRanges": {
+          "CORE": [9.99, 29.99],
+          "COBRAND": [9.99, 32.99],
+          "PRIVATE": [0.0, 36.0]
+        }
+      },
+      "severity": {
+        "outsideRange": "HIGH",
+        "unknownProduct": "HIGH"
+      },
+      "messages": {
+        "outsideRange": "Account bounds {floor:.2f}%-{ceiling:.2f}% fall outside the {product} disclosed range of {low:.2f}%-{high:.2f}%",
+        "unknownProduct": "Product code {product} has no disclosed rate range configured"
       }
     }
   ]

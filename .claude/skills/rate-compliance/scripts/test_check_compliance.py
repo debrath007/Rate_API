@@ -323,9 +323,14 @@ def test_report_echoes_the_rules_that_were_applied(tmp_path):
 
     report = check(path)
 
-    assert report["rulesVersion"] == "2.0"
+    # Asserted against the rule file rather than a literal: pinning the version here
+    # means every policy release breaks a test that is not about versioning.
+    ruleset = json.loads(RULES.read_text(encoding="utf-8"))
+    enabled = [r["id"] for r in ruleset["rules"] if r.get("enabled", True)]
+
+    assert report["rulesVersion"] == ruleset["version"]
     assert cc.RULE_CODE_CEILING in report["rulesApplied"]
-    assert len(report["rulesApplied"]) == 6
+    assert report["rulesApplied"] == enabled
 
 
 # --- The rule file drives behaviour ------------------------------------------
@@ -531,3 +536,166 @@ def test_cli_text_format_is_human_readable(tmp_path):
     assert "NON-COMPLIANT" in result.stdout
     assert "OVERRIDE_CODE_CEILING" in result.stdout
     assert not result.stdout.lstrip().startswith("{")
+
+
+# --- Configuration rules -----------------------------------------------------
+#
+# These need the config columns, so they use a wider header set. The narrower
+# fixtures above deliberately omit them, which is what proves these rules stay
+# silent on a sheet that cannot answer them.
+
+CONFIG_HEADERS = FULL_HEADERS + [
+    "ProductCode", "OriginationDate", "OverrideExpiry",
+    "ProtectionStart", "ProtectionEnd",
+    "DayCountBasis", "CompoundingFrequency", "RoundingRule"]
+
+
+def config_row(**kwargs):
+    base = row()
+    base.update({"ProductCode": "CORE", "OriginationDate": "2023-01-01",
+                 "DayCountBasis": 365, "CompoundingFrequency": "DAILY",
+                 "RoundingRule": "HALF_UP"})
+    base.update(kwargs)
+    return base
+
+
+def config_check(tmp_path, name, rows_):
+    return check(write_workbook(tmp_path / name, rows_, headers=CONFIG_HEADERS))
+
+
+def test_config_row_is_clean(tmp_path):
+    assert config_check(tmp_path, "ok.xlsx", [config_row()])["violations"] == []
+
+
+def test_day_count_other_than_policy_is_critical(tmp_path):
+    report = config_check(tmp_path, "dc.xlsx", [config_row(DayCountBasis=360)])
+
+    found = rules(report, cc.RULE_DAY_COUNT)
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_CRITICAL
+    assert "360" in found[0]["message"]
+
+
+def test_compounding_other_than_policy_is_critical(tmp_path):
+    found = rules(config_check(tmp_path, "cf.xlsx",
+                               [config_row(CompoundingFrequency="MONTHLY")]),
+                  cc.RULE_COMPOUNDING)
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_CRITICAL
+
+
+def test_rounding_other_than_policy_is_high(tmp_path):
+    found = rules(config_check(tmp_path, "rr.xlsx",
+                               [config_row(RoundingRule="HALF_EVEN")]),
+                  cc.RULE_ROUNDING)
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_HIGH
+
+
+def test_config_rules_are_silent_when_the_columns_are_absent(tmp_path):
+    # The narrow fixture has no config columns at all, so these rules must not fire.
+    report = check(write_workbook(tmp_path / "narrow.xlsx", [row()]))
+    assert rules(report, cc.RULE_DAY_COUNT) == []
+    assert rules(report, cc.RULE_COMPOUNDING) == []
+    assert rules(report, cc.RULE_ROUNDING) == []
+
+
+# --- OVERRIDE_NOT_EXPIRED ----------------------------------------------------
+
+def test_override_past_its_expiry_is_reported(tmp_path):
+    found = rules(config_check(tmp_path, "exp.xlsx", [config_row(
+        OverrideCode="CMA", OverrideRate=12.00, OverrideExpiry="2025-01-01")]),
+        cc.RULE_OVERRIDE_EXPIRY)
+
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_HIGH
+    assert "2025-01-01" in found[0]["message"]
+
+
+def test_override_expiring_in_the_future_is_clean(tmp_path):
+    assert rules(config_check(tmp_path, "future.xlsx", [config_row(
+        OverrideCode="CMA", OverrideRate=12.00, OverrideExpiry="2099-01-01")]),
+        cc.RULE_OVERRIDE_EXPIRY) == []
+
+
+def test_expiry_without_an_override_is_not_reported(tmp_path):
+    # A stale date on a row carrying no override is not charging anyone anything.
+    assert rules(config_check(tmp_path, "stray.xlsx",
+                              [config_row(OverrideExpiry="2025-01-01")]),
+                 cc.RULE_OVERRIDE_EXPIRY) == []
+
+
+# --- PROTECTION_DATES_VALID --------------------------------------------------
+
+def test_protected_code_without_a_start_date_is_reported(tmp_path):
+    found = rules(config_check(tmp_path, "nostart.xlsx", [config_row(
+        OverrideCode="SCRA", OverrideRate=6.00)]), cc.RULE_PROTECTION_DATES)
+
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_HIGH
+    assert "no protection start" in found[0]["message"]
+
+
+def test_protection_that_has_ended_but_is_still_applied_is_reported(tmp_path):
+    found = rules(config_check(tmp_path, "ended.xlsx", [config_row(
+        OverrideCode="SCRA", OverrideRate=6.00,
+        ProtectionStart="2024-01-01", ProtectionEnd="2025-06-30")]),
+        cc.RULE_PROTECTION_DATES)
+
+    assert len(found) == 1
+    assert "2025-06-30" in found[0]["message"]
+
+
+def test_active_protection_is_clean(tmp_path):
+    assert rules(config_check(tmp_path, "active.xlsx", [config_row(
+        OverrideCode="SCRA", OverrideRate=6.00, ProtectionStart="2024-01-01")]),
+        cc.RULE_PROTECTION_DATES) == []
+
+
+def test_unprotected_override_code_needs_no_protection_dates(tmp_path):
+    # CMA is a goodwill discount, not a statutory protection.
+    assert rules(config_check(tmp_path, "cma.xlsx", [config_row(
+        OverrideCode="CMA", OverrideRate=12.00)]), cc.RULE_PROTECTION_DATES) == []
+
+
+# --- PRE_SERVICE_DEBT_SCOPE --------------------------------------------------
+
+def test_statutory_cap_on_post_activation_debt_is_reported(tmp_path):
+    found = rules(config_check(tmp_path, "post.xlsx", [config_row(
+        OverrideCode="SCRA", OverrideRate=6.00,
+        OriginationDate="2025-03-01", ProtectionStart="2024-01-01")]),
+        cc.RULE_PRE_SERVICE)
+
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_HIGH
+
+
+def test_statutory_cap_on_pre_service_debt_is_clean(tmp_path):
+    assert rules(config_check(tmp_path, "pre.xlsx", [config_row(
+        OverrideCode="SCRA", OverrideRate=6.00,
+        OriginationDate="2023-01-01", ProtectionStart="2024-01-01")]),
+        cc.RULE_PRE_SERVICE) == []
+
+
+# --- BOUNDS_WITHIN_PRODUCT_RANGE ---------------------------------------------
+
+def test_ceiling_above_the_product_range_is_reported(tmp_path):
+    found = rules(config_check(tmp_path, "wide.xlsx",
+                               [config_row(CeilingRate=44.00)]), cc.RULE_PRODUCT_RANGE)
+
+    assert len(found) == 1
+    assert found[0]["severity"] == cc.SEVERITY_HIGH
+    assert "CORE" in found[0]["message"]
+
+
+def test_unknown_product_code_is_reported(tmp_path):
+    found = rules(config_check(tmp_path, "mystery.xlsx",
+                               [config_row(ProductCode="MYSTERY")]), cc.RULE_PRODUCT_RANGE)
+
+    assert len(found) == 1
+    assert "MYSTERY" in found[0]["message"]
+
+
+def test_bounds_inside_the_product_range_are_clean(tmp_path):
+    assert rules(config_check(tmp_path, "inside.xlsx", [config_row(
+        ProductCode="PRIVATE", CeilingRate=36.00)]), cc.RULE_PRODUCT_RANGE) == []

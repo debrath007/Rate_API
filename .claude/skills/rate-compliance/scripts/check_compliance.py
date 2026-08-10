@@ -54,6 +54,13 @@ RULE_FLOOR = "RATE_FLOOR"
 RULE_LOWER_WINS = "LOWER_RATE_WINS"
 RULE_FORMULA = "RATE_MATCHES_FORMULA"
 RULE_SANITY = "RATE_SANITY"
+RULE_DAY_COUNT = "CONSISTENT_DAY_COUNT"
+RULE_COMPOUNDING = "CONSISTENT_COMPOUNDING"
+RULE_ROUNDING = "CONSISTENT_ROUNDING"
+RULE_OVERRIDE_EXPIRY = "OVERRIDE_NOT_EXPIRED"
+RULE_PROTECTION_DATES = "PROTECTION_DATES_VALID"
+RULE_PRE_SERVICE = "PRE_SERVICE_DEBT_SCOPE"
+RULE_PRODUCT_RANGE = "BOUNDS_WITHIN_PRODUCT_RANGE"
 
 SEVERITY_CRITICAL = "CRITICAL"
 SEVERITY_HIGH = "HIGH"
@@ -87,7 +94,19 @@ OPTIONAL_ALIASES = {
     "margin": ("margin", "spread"),
     "floorRate": ("floorrate", "floor", "minrate", "aprfloor"),
     "ceilingRate": ("ceilingrate", "ceiling", "maxrate", "aprceiling"),
+    "productCode": ("productcode", "product", "producttype"),
+    "originationDate": ("originationdate", "opened", "openeddate", "origination"),
+    "overrideExpiry": ("overrideexpiry", "overrideexpires", "overrideenddate"),
+    "protectionStart": ("protectionstart", "activedutystart", "protectionstartdate"),
+    "protectionEnd": ("protectionend", "activedutyend", "protectionenddate"),
+    "dayCountBasis": ("daycountbasis", "daycount", "divisor"),
+    "compoundingFrequency": ("compoundingfrequency", "compounding"),
+    "roundingRule": ("roundingrule", "rounding"),
 }
+
+# Columns holding an ISO date rather than a rate; read as text and compared
+# lexically, which is ordering-correct for ISO-8601 and avoids Excel serial dates.
+DATE_COLUMNS = ("originationDate", "overrideExpiry", "protectionStart", "protectionEnd")
 
 
 class CheckError(Exception):
@@ -139,6 +158,10 @@ def load_rules(path=None) -> dict:
             if not isinstance(rule.get(section), dict):
                 raise CheckError(f"rule {rule_id!r} has no '{section}' object")
         rule.setdefault("params", {})
+        # Evaluators receive a rule, not the whole document, so the shared as-of
+        # date is pushed down here. A rule may still pin its own.
+        if document.get("asOfDate"):
+            rule["params"].setdefault("asOfDate", document["asOfDate"])
 
     return document
 
@@ -229,6 +252,22 @@ def read_text(cell):
         return None
     text = str(cell.value).strip()
     return text or None
+
+
+def read_date(cell):
+    """Return an ISO date string, or None if blank.
+
+    Dates are written as text so they survive a round trip through either reader,
+    but a sheet edited in Excel may come back as a datetime -- normalise both to
+    YYYY-MM-DD so comparisons stay lexical.
+    """
+    if cell is None or cell.value is None:
+        return None
+    value = cell.value
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    text = str(value).strip()
+    return text[:10] if text else None
 
 
 # --- Policy evaluation -------------------------------------------------------
@@ -397,6 +436,151 @@ def check_lower_rate_wins(row, rule, epsilon, violations):
             actual=actual, rate=rate, overrideRate=override_rate, expected=expected))
 
 
+def _as_of(rule):
+    """The date the sheet is judged against. Pinned in the rule file so a report is
+    reproducible; falling back to today would make yesterday's run unrepeatable."""
+    return rule["params"].get("asOfDate") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def check_config_matches(row, rule, epsilon, violations):
+    """A configuration column must match the value policy declares for the portfolio.
+
+    Interest mechanics -- day-count divisor, compounding frequency, rounding rule --
+    have to be uniform, because two accounts computing interest differently is a
+    defect no matter which of them is 'right' (APR-041, APR-046, APR-048).
+    """
+    field = rule["params"]["field"]
+    expected = rule["params"]["expected"]
+
+    actual = row.get(field)
+    if actual is None:
+        return
+
+    if str(actual).strip().upper() == str(expected).strip().upper():
+        return
+
+    # Template keys are want/got rather than expected/actual: _finding already takes
+    # those two positionally, and reusing the names would collide in the call.
+    violations.append(_finding(
+        row, rule, "mismatch", expected, None,
+        field=field, want=expected, got=actual))
+
+
+def check_override_not_expired(row, rule, epsilon, violations):
+    """An override past its expiry date should have reverted, not still be in force.
+
+    A rate that sticks after the arrangement behind it ends is the APR-088 failure:
+    the customer keeps a rate nobody re-authorised, and the underlying rate that
+    should now apply is never recalculated.
+    """
+    if not row["overrideCode"]:
+        return
+
+    expiry = row.get("overrideExpiry")
+    if not expiry:
+        return
+
+    as_of = _as_of(rule)
+    if expiry >= as_of:
+        return
+
+    violations.append(_finding(
+        row, rule, "expired", None, row["effective"],
+        code=row["overrideCode"], expiry=expiry, asOf=as_of))
+
+
+def check_protection_dates_valid(row, rule, epsilon, violations):
+    """A protected-population cap needs a protection period behind it.
+
+    Missing start dates mean the cap cannot be evidenced (APR-103); a cap still
+    applied after the protection ended means the reversion never happened (APR-105).
+    """
+    code = row["overrideCode"]
+    if not code:
+        return
+
+    protected = rule["params"]["protectedCodes"]
+    applicable = [c.strip().upper() for c in code.split(",")
+                  if c.strip().upper() in protected]
+    if not applicable:
+        return
+
+    # A sheet without the protection columns cannot answer this; flagging every
+    # protected row there would be an artefact of the layout, not a finding.
+    if "protectionStart" not in row.get("_columnsPresent", frozenset()):
+        return
+
+    as_of = _as_of(rule)
+    start, end = row.get("protectionStart"), row.get("protectionEnd")
+
+    if not start:
+        violations.append(_finding(
+            row, rule, "missingStart", None, None, code=",".join(applicable)))
+        return
+
+    if end and end < as_of:
+        violations.append(_finding(
+            row, rule, "endedButApplied", None, row["effective"],
+            code=",".join(applicable), end=end, asOf=as_of))
+
+
+def check_pre_service_debt_scope(row, rule, epsilon, violations):
+    """A statutory cap covers debt incurred before the protection began.
+
+    Applying it to balances opened after activation extends the protection past what
+    the statute grants, which is as much a control failure as under-applying it
+    (APR-100).
+    """
+    code = row["overrideCode"]
+    if not code:
+        return
+
+    protected = rule["params"]["protectedCodes"]
+    applicable = [c.strip().upper() for c in code.split(",")
+                  if c.strip().upper() in protected]
+    if not applicable:
+        return
+
+    start, origin = row.get("protectionStart"), row.get("originationDate")
+    if not start or not origin:
+        return
+
+    if origin < start:
+        return
+
+    violations.append(_finding(
+        row, rule, "postActivation", None, row["effective"],
+        code=",".join(applicable), origination=origin, start=start))
+
+
+def check_bounds_within_product_range(row, rule, epsilon, violations):
+    """An account's own floor and ceiling must sit inside its product's disclosed range.
+
+    The marketed range has to bound every rate the system can actually assign, so an
+    account configured outside it can be charged a rate that was never disclosed
+    (APR-112, APR-073).
+    """
+    product = row.get("productCode")
+    floor, ceiling = row.get("floorRate"), row.get("ceilingRate")
+    if not product or floor is None or ceiling is None:
+        return
+
+    ranges = rule["params"]["productRanges"]
+    bounds = ranges.get(product.strip().upper())
+    if not bounds:
+        violations.append(_finding(
+            row, rule, "unknownProduct", None, None, product=product))
+        return
+
+    low, high = bounds
+    if floor - low >= -epsilon and ceiling - high <= epsilon:
+        return
+
+    violations.append(_finding(
+        row, rule, "outsideRange", None, None,
+        product=product, floor=floor, ceiling=ceiling, low=low, high=high))
+
+
 # Maps a rule file's "check" name to the function that evaluates it. Rule files
 # select from these by name rather than carrying executable logic, so an untrusted
 # rule file can retune the policy but cannot introduce new behaviour.
@@ -407,6 +591,11 @@ CHECKS = {
     "lower_rate_wins": check_lower_rate_wins,
     "rate_matches_formula": check_rate_matches_formula,
     "rate_sanity": check_rate_sanity,
+    "config_matches": check_config_matches,
+    "override_not_expired": check_override_not_expired,
+    "protection_dates_valid": check_protection_dates_valid,
+    "pre_service_debt_scope": check_pre_service_debt_scope,
+    "bounds_within_product_range": check_bounds_within_product_range,
 }
 
 
@@ -462,6 +651,15 @@ def load_rows(path: str, sheet_name: str | None):
             "margin": read_rate(cell_at(cells, "margin")),
             "floorRate": read_rate(cell_at(cells, "floorRate")),
             "ceilingRate": read_rate(cell_at(cells, "ceilingRate")),
+            "productCode": read_text(cell_at(cells, "productCode")),
+            "dayCountBasis": read_text(cell_at(cells, "dayCountBasis")),
+            "compoundingFrequency": read_text(cell_at(cells, "compoundingFrequency")),
+            "roundingRule": read_text(cell_at(cells, "roundingRule")),
+            **{name: read_date(cell_at(cells, name)) for name in DATE_COLUMNS},
+            # Which optional columns the sheet actually carries. A rule must be able
+            # to tell "column absent" from "cell blank": the first means the sheet
+            # cannot answer the question, the second is a real gap in the data.
+            "_columnsPresent": frozenset(columns),
         })
     return records
 
