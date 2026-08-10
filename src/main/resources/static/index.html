@@ -6,54 +6,188 @@
 	<title>APR Rate Console</title>
 	<style>
 		:root {
-			--bg: #f4f6fa;
+			--bg: #f3f5fa;
+			--sidebar-bg: #ffffff;
 			--panel: #ffffff;
-			--ink: #1c2333;
-			--muted: #64708a;
-			--line: #dde3ee;
-			--accent: #2f5bd7;
+			--panel-alt: #f8f9fd;
+			--ink: #171b2e;
+			--muted: #6b7290;
+			--line: #e4e7f1;
+			--accent: #4f5fe0;
 			--accent-ink: #ffffff;
-			--ok: #157a4a;
-			--ok-bg: #e6f5ed;
-			--bad: #b3261e;
+			--accent-soft: #eef0fd;
+			--ok: #0f7a4f;
+			--ok-bg: #e6f6ee;
+			--bad: #b8271f;
 			--bad-bg: #fdecea;
 			--warn: #8a5a00;
 			--warn-bg: #fff4e0;
+			--shadow: 0 1px 2px rgba(23, 27, 46, 0.04), 0 8px 24px rgba(23, 27, 46, 0.06);
+			--shadow-sm: 0 1px 2px rgba(23, 27, 46, 0.05);
+			--code-bg: #eef0f8;
+			--pre-bg: #1d2135;
+			--pre-ink: #e6e9f5;
+		}
+
+		@media (prefers-color-scheme: dark) {
+			:root {
+				--bg: #0f1220;
+				--sidebar-bg: #141830;
+				--panel: #161a30;
+				--panel-alt: #1b2038;
+				--ink: #eef0fb;
+				--muted: #9298bd;
+				--line: #2a3050;
+				--accent: #7c88f4;
+				--accent-ink: #10122a;
+				--accent-soft: #23274a;
+				--ok: #4fd8a0;
+				--ok-bg: #113228;
+				--bad: #ff8c85;
+				--bad-bg: #3a1a1c;
+				--warn: #f2c14e;
+				--warn-bg: #3a2c0d;
+				--shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.35);
+				--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+				--code-bg: #23274a;
+				--pre-bg: #0b0d1a;
+				--pre-ink: #d7dbf2;
+			}
 		}
 
 		* { box-sizing: border-box; }
 
 		body {
 			margin: 0;
-			padding: 32px 20px 64px;
 			background: var(--bg);
 			color: var(--ink);
-			font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+			font: 15px/1.55 "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+			-webkit-font-smoothing: antialiased;
 		}
 
-		.wrap { max-width: 1000px; margin: 0 auto; }
+		.app {
+			display: flex;
+			min-height: 100vh;
+		}
 
-		header { margin-bottom: 28px; }
-		header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
-		header p { margin: 0; color: var(--muted); }
+		/* ---------- Sidebar ---------- */
+
+		.sidebar {
+			flex: 0 0 246px;
+			background: var(--sidebar-bg);
+			border-right: 1px solid var(--line);
+			padding: 22px 14px;
+			position: sticky;
+			top: 0;
+			height: 100vh;
+			overflow-y: auto;
+		}
+
+		.brand {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			padding: 4px 10px 22px;
+		}
+
+		.brand .mark {
+			width: 30px;
+			height: 30px;
+			border-radius: 9px;
+			background: linear-gradient(135deg, var(--accent), #8b6ff0);
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			color: #fff;
+			font-weight: 700;
+			font-size: 13px;
+			flex: none;
+			box-shadow: var(--shadow-sm);
+		}
+
+		.brand .name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+		.brand .sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+
+		nav.navlist {
+			display: flex;
+			flex-direction: column;
+			gap: 2px;
+		}
+
+		.navitem {
+			display: flex;
+			align-items: center;
+			gap: 11px;
+			width: 100%;
+			padding: 9px 12px;
+			border: none;
+			border-radius: 8px;
+			background: transparent;
+			color: var(--muted);
+			font: inherit;
+			font-size: 13.5px;
+			font-weight: 500;
+			text-align: left;
+			cursor: pointer;
+			border-left: 3px solid transparent;
+		}
+
+		.navitem svg {
+			flex: none;
+			width: 17px;
+			height: 17px;
+			stroke: currentColor;
+			fill: none;
+			stroke-width: 1.8;
+			stroke-linecap: round;
+			stroke-linejoin: round;
+		}
+
+		.navitem:hover { background: var(--panel-alt); color: var(--ink); }
+
+		.navitem.active {
+			background: var(--accent-soft);
+			color: var(--accent);
+			font-weight: 600;
+			border-left-color: var(--accent);
+		}
+
+		/* ---------- Content ---------- */
+
+		.content {
+			flex: 1;
+			min-width: 0;
+			padding: 34px 40px 64px;
+			max-width: 980px;
+		}
+
+		.tabpanel { display: none; }
+		.tabpanel.active { display: block; animation: fadeIn 0.18s ease; }
+
+		@keyframes fadeIn {
+			from { opacity: 0; transform: translateY(3px); }
+			to   { opacity: 1; transform: translateY(0); }
+		}
 
 		.panel {
 			background: var(--panel);
 			border: 1px solid var(--line);
-			border-radius: 10px;
-			padding: 20px 22px;
-			margin-bottom: 20px;
+			border-radius: 14px;
+			padding: 24px 26px;
+			box-shadow: var(--shadow);
 		}
 
 		.panel h2 {
-			margin: 0 0 4px;
-			font-size: 17px;
+			margin: 0 0 6px;
+			font-size: 19px;
+			letter-spacing: -0.01em;
 		}
 
 		.panel .hint {
-			margin: 0 0 16px;
+			margin: 0 0 18px;
 			color: var(--muted);
 			font-size: 13.5px;
+			max-width: 62ch;
 		}
 
 		.row {
@@ -63,16 +197,16 @@
 			align-items: center;
 		}
 
-		label { font-size: 13.5px; color: var(--muted); }
+		label { font-size: 13px; color: var(--muted); }
 
 		input, select {
 			font: inherit;
-			padding: 8px 10px;
+			padding: 9px 11px;
 			border: 1px solid var(--line);
-			border-radius: 6px;
-			background: #fff;
+			border-radius: 8px;
+			background: var(--panel-alt);
 			color: var(--ink);
-			min-width: 160px;
+			min-width: 170px;
 		}
 
 		input:focus, select:focus {
@@ -84,29 +218,31 @@
 		button {
 			font: inherit;
 			font-weight: 600;
-			padding: 8px 16px;
+			padding: 9px 17px;
 			border: 1px solid transparent;
-			border-radius: 6px;
+			border-radius: 8px;
 			background: var(--accent);
 			color: var(--accent-ink);
 			cursor: pointer;
+			transition: filter 0.1s ease, transform 0.05s ease;
 		}
 
 		button.secondary {
-			background: #fff;
+			background: var(--panel-alt);
 			color: var(--ink);
 			border-color: var(--line);
 		}
 
 		button:disabled { opacity: 0.55; cursor: not-allowed; }
 		button:not(:disabled):hover { filter: brightness(1.08); }
+		button:not(:disabled):active { transform: translateY(1px); }
 
-		.out { margin-top: 16px; }
+		.out { margin-top: 18px; }
 		.out:empty { display: none; }
 
 		.msg {
-			padding: 10px 14px;
-			border-radius: 6px;
+			padding: 11px 15px;
+			border-radius: 8px;
 			font-size: 14px;
 		}
 		.msg.ok   { background: var(--ok-bg);   color: var(--ok);   }
@@ -116,31 +252,35 @@
 		table {
 			width: 100%;
 			border-collapse: collapse;
-			margin-top: 12px;
-			font-size: 14px;
+			margin-top: 14px;
+			font-size: 13.5px;
 		}
 
 		th, td {
 			text-align: left;
-			padding: 8px 10px;
+			padding: 9px 11px;
 			border-bottom: 1px solid var(--line);
 		}
 
 		th {
-			font-size: 12px;
+			font-size: 11.5px;
 			text-transform: uppercase;
-			letter-spacing: 0.04em;
+			letter-spacing: 0.05em;
 			color: var(--muted);
+			font-weight: 600;
 		}
+
+		tbody tr:hover { background: var(--panel-alt); }
 
 		td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 		.pill {
 			display: inline-block;
-			padding: 2px 9px;
+			padding: 3px 10px;
 			border-radius: 100px;
-			font-size: 12px;
-			font-weight: 600;
+			font-size: 11.5px;
+			font-weight: 700;
+			letter-spacing: 0.02em;
 		}
 		.pill.passed  { background: var(--ok-bg);   color: var(--ok);   }
 		.pill.failed  { background: var(--bad-bg);  color: var(--bad);  }
@@ -149,50 +289,50 @@
 		.pill.HIGH     { background: var(--warn-bg); color: var(--warn); }
 
 		.narrative {
-			margin-top: 16px;
-			padding: 16px 18px;
-			background: #f8fafd;
+			margin-top: 18px;
+			padding: 18px 20px;
+			background: var(--panel-alt);
 			border: 1px solid var(--line);
 			border-left: 3px solid var(--accent);
-			border-radius: 6px;
+			border-radius: 10px;
 			font-size: 14px;
 			white-space: pre-wrap;
 		}
 
 		.narrative h3 {
 			margin: 0 0 10px;
-			font-size: 13px;
+			font-size: 12.5px;
 			text-transform: uppercase;
-			letter-spacing: 0.04em;
+			letter-spacing: 0.05em;
 			color: var(--muted);
 		}
 
 		code {
-			background: #eef1f7;
-			padding: 1px 5px;
-			border-radius: 4px;
+			background: var(--code-bg);
+			padding: 1px 6px;
+			border-radius: 5px;
 			font-size: 12.5px;
 		}
 
 		.summary {
 			display: flex;
-			gap: 22px;
+			gap: 24px;
 			flex-wrap: wrap;
-			padding: 12px 14px;
-			background: #f8fafd;
+			padding: 14px 16px;
+			background: var(--panel-alt);
 			border: 1px solid var(--line);
-			border-radius: 8px;
+			border-radius: 10px;
 		}
-		.summary div { font-size: 13px; color: var(--muted); }
+		.summary div { font-size: 12.5px; color: var(--muted); }
 		.summary strong {
 			display: block;
-			font-size: 20px;
+			font-size: 21px;
 			color: var(--ink);
 			font-variant-numeric: tabular-nums;
 		}
 
 		.suite-name {
-			margin: 20px 0 0;
+			margin: 22px 0 0;
 			font-size: 14px;
 			font-weight: 600;
 		}
@@ -203,10 +343,10 @@
 
 		pre {
 			margin: 8px 0 0;
-			padding: 12px;
-			background: #2b2f3a;
-			color: #e6e9f0;
-			border-radius: 6px;
+			padding: 13px;
+			background: var(--pre-bg);
+			color: var(--pre-ink);
+			border-radius: 8px;
 			font-size: 12.5px;
 			line-height: 1.45;
 			overflow-x: auto;
@@ -229,90 +369,167 @@
 
 		@media (prefers-reduced-motion: reduce) {
 			.spinner { animation-duration: 2s; }
+			.tabpanel.active { animation: none; }
+		}
+
+		/* ---------- Responsive: collapse sidebar to a top tab bar ---------- */
+
+		@media (max-width: 760px) {
+			.app { flex-direction: column; }
+
+			.sidebar {
+				position: static;
+				height: auto;
+				width: 100%;
+				border-right: none;
+				border-bottom: 1px solid var(--line);
+				padding: 14px 10px;
+			}
+
+			.brand { padding: 2px 8px 14px; }
+
+			nav.navlist {
+				flex-direction: row;
+				overflow-x: auto;
+				gap: 4px;
+				padding-bottom: 2px;
+			}
+
+			.navitem {
+				flex: none;
+				border-left: none;
+				border-bottom: 3px solid transparent;
+				border-radius: 8px 8px 0 0;
+				white-space: nowrap;
+			}
+
+			.navitem.active { border-bottom-color: var(--accent); }
+
+			.content { padding: 22px 16px 48px; max-width: 100%; }
+			.panel { padding: 18px 18px; }
 		}
 	</style>
 </head>
 <body>
-<div class="wrap">
-	<header>
-		<h1>APR Rate Console</h1>
-		<p>Read and adjust credit-card APR data in <code>APR_Report.xlsx</code>.</p>
-	</header>
-
-	<!-- 1. Fetch one account -->
-	<section class="panel">
-		<h2>Account rates</h2>
-		<p class="hint">Shows the effective rate per rate type &mdash; the lower of the normal rate and any override.</p>
-		<div class="row">
-			<label for="accountId">Account ID</label>
-			<input id="accountId" value="ACC005" placeholder="ACC005" autocomplete="off">
-			<button id="fetchBtn">Fetch rates</button>
+<div class="app">
+	<aside class="sidebar">
+		<div class="brand">
+			<div class="mark">APR</div>
+			<div>
+				<div class="name">Rate Console</div>
+				<div class="sub">APR_Report.xlsx</div>
+			</div>
 		</div>
-		<div class="out" id="fetchOut"></div>
-	</section>
+		<nav class="navlist">
+			<button class="navitem active" data-tab="rates" type="button">
+				<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M4.5 20c1.4-3.6 4.4-5.5 7.5-5.5s6.1 1.9 7.5 5.5"/></svg>
+				Account rates
+			</button>
+			<button class="navitem" data-tab="adjust" type="button">
+				<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><circle cx="7.5" cy="7.5" r="2"/><circle cx="16.5" cy="16.5" r="2"/></svg>
+				Move the index
+			</button>
+			<button class="navitem" data-tab="backups" type="button">
+				<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.5V12l3 2"/></svg>
+				Backups
+			</button>
+			<button class="navitem" data-tab="compliance" type="button">
+				<svg viewBox="0 0 24 24"><path d="M12 3.5 5 6.3v5.4c0 4.4 3 6.9 7 8.8 4-1.9 7-4.4 7-8.8V6.3z"/><path d="m9.3 12 1.9 1.9 3.5-3.8"/></svg>
+				Compliance
+			</button>
+			<button class="navitem" data-tab="tests" type="button">
+				<svg viewBox="0 0 24 24"><rect x="4.5" y="3.5" width="15" height="17" rx="2.2"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5"/></svg>
+				Run tests
+			</button>
+		</nav>
+	</aside>
 
-	<!-- 2. Adjust all -->
-	<section class="panel">
-		<h2>Move the benchmark index</h2>
-		<p class="hint">
-			Simulates a prime-rate movement. Variable-rate accounts are repriced from their own
-			index and margin; fixed-rate accounts do not track the index and are left alone.
-			Positive raises the index, negative cuts it. A backup is taken automatically before
-			anything is written.
-		</p>
-		<div class="row">
-			<label for="indexChange">Index change (points)</label>
-			<input id="indexChange" type="number" step="0.25" value="0.5" style="min-width:110px">
-			<button id="adjustBtn">Reprice portfolio</button>
-		</div>
-		<div class="out" id="adjustOut"></div>
-	</section>
+	<main class="content">
+		<!-- 1. Fetch one account -->
+		<section class="tabpanel active" id="tab-rates">
+			<div class="panel">
+				<h2>Account rates</h2>
+				<p class="hint">Shows the effective rate per rate type &mdash; the lower of the normal rate and any override.</p>
+				<div class="row">
+					<label for="accountId">Account ID</label>
+					<input id="accountId" value="ACC005" placeholder="ACC005" autocomplete="off">
+					<button id="fetchBtn">Fetch rates</button>
+				</div>
+				<div class="out" id="fetchOut"></div>
+			</div>
+		</section>
 
-	<!-- 3. Backups -->
-	<section class="panel">
-		<h2>Backups</h2>
-		<p class="hint">Every adjustment snapshots the workbook first. Restoring overwrites the live file with the newest snapshot.</p>
-		<div class="row">
-			<button class="secondary" id="listBackupsBtn">Refresh list</button>
-			<button id="restoreBtn">Restore latest</button>
-		</div>
-		<div class="out" id="backupOut"></div>
-	</section>
+		<!-- 2. Move the benchmark index -->
+		<section class="tabpanel" id="tab-adjust">
+			<div class="panel">
+				<h2>Move the benchmark index</h2>
+				<p class="hint">
+					Simulates a prime-rate movement. Variable-rate accounts are repriced from their own
+					index and margin; fixed-rate accounts do not track the index and are left alone.
+					Positive raises the index, negative cuts it. A backup is taken automatically before
+					anything is written.
+				</p>
+				<div class="row">
+					<label for="indexChange">Index change (points)</label>
+					<input id="indexChange" type="number" step="0.25" value="0.5" style="min-width:110px">
+					<button id="adjustBtn">Reprice portfolio</button>
+				</div>
+				<div class="out" id="adjustOut"></div>
+			</div>
+		</section>
 
-	<!-- 4. Compliance -->
-	<section class="panel">
-		<h2>Rate policy compliance</h2>
-		<p class="hint">
-			Checks the workbook against six policy rules: statutory ceilings for protected accounts
-			(SCRA 6.00%, MLA 36.00%), each account's own disclosed floor and ceiling, lower-of-normal-or-override,
-			rate derived from index plus margin, and a sanity range. The rules live in
-			<code>rules.json</code>. The SME review adds an expert reading of the findings &mdash; it calls the
-			Claude CLI, takes around 30 seconds, and consumes API tokens.
-		</p>
-		<div class="row">
-			<button id="checkComplianceBtn">Check compliance</button>
-			<button class="secondary" id="reviewBtn">Ask policy SME</button>
-		</div>
-		<div class="out" id="complianceOut"></div>
-	</section>
+		<!-- 3. Backups -->
+		<section class="tabpanel" id="tab-backups">
+			<div class="panel">
+				<h2>Backups</h2>
+				<p class="hint">Every adjustment snapshots the workbook first. Restoring overwrites the live file with the newest snapshot.</p>
+				<div class="row">
+					<button class="secondary" id="listBackupsBtn">Refresh list</button>
+					<button id="restoreBtn">Restore latest</button>
+				</div>
+				<div class="out" id="backupOut"></div>
+			</div>
+		</section>
 
-	<!-- 5. Tests -->
-	<section class="panel">
-		<h2>Run tests</h2>
-		<p class="hint">
-			Runs the project's Gradle test task and reports each test case. Tests use their own throwaway
-			copy of the workbook, so this never touches your real data.
-		</p>
-		<div class="row">
-			<label for="scope">Scope</label>
-			<select id="scope">
-				<option value="all">All tests (unit + integration)</option>
-				<option value="unit">Unit tests only (faster)</option>
-			</select>
-			<button id="runTestsBtn">Run tests</button>
-		</div>
-		<div class="out" id="testOut"></div>
-	</section>
+		<!-- 4. Compliance -->
+		<section class="tabpanel" id="tab-compliance">
+			<div class="panel">
+				<h2>Rate policy compliance</h2>
+				<p class="hint">
+					Checks the workbook against six policy rules: statutory ceilings for protected accounts
+					(SCRA 6.00%, MLA 36.00%), each account's own disclosed floor and ceiling,
+					lower-of-normal-or-override, rate derived from index plus margin, and a sanity range.
+					The rules live in <code>rules.json</code>. The SME review adds an expert reading of the
+					findings &mdash; it calls the Claude CLI, takes around 30 seconds, and consumes API tokens.
+				</p>
+				<div class="row">
+					<button id="checkComplianceBtn">Check compliance</button>
+					<button class="secondary" id="reviewBtn">Ask policy SME</button>
+				</div>
+				<div class="out" id="complianceOut"></div>
+			</div>
+		</section>
+
+		<!-- 5. Tests -->
+		<section class="tabpanel" id="tab-tests">
+			<div class="panel">
+				<h2>Run tests</h2>
+				<p class="hint">
+					Runs the project's Gradle test task and reports each test case. Tests use their own throwaway
+					copy of the workbook, so this never touches your real data.
+				</p>
+				<div class="row">
+					<label for="scope">Scope</label>
+					<select id="scope">
+						<option value="all">All tests (unit + integration)</option>
+						<option value="unit">Unit tests only (faster)</option>
+					</select>
+					<button id="runTestsBtn">Run tests</button>
+				</div>
+				<div class="out" id="testOut"></div>
+			</div>
+		</section>
+	</main>
 </div>
 
 <script>
@@ -352,6 +569,16 @@
 		}
 	}
 
+	// ---- Tab navigation ----------------------------------------------------------
+	document.querySelectorAll('.navitem').forEach((btn) => {
+		btn.addEventListener('click', () => {
+			document.querySelectorAll('.navitem').forEach((b) => b.classList.remove('active'));
+			document.querySelectorAll('.tabpanel').forEach((p) => p.classList.remove('active'));
+			btn.classList.add('active');
+			$('tab-' + btn.dataset.tab).classList.add('active');
+		});
+	});
+
 	// ---- 1. Fetch account rates -------------------------------------------------
 	async function fetchRates() {
 		const out = $('fetchOut');
@@ -379,8 +606,7 @@
 
 		out.innerHTML =
 			'<div class="msg ok">' + esc(accountId) + ' &mdash; ' + body.rates.length + ' rate type(s)</div>' +
-			'<table><thead><tr><th>Rate type</th><th>Scenario</th>'
-			+ '<th style="text-align:right">Effective rate</th></tr></thead>' +
+			'<table><thead><tr><th>Rate type</th><th>Scenario</th><th style="text-align:right">Effective rate</th></tr></thead>' +
 			'<tbody>' + rows + '</tbody></table>';
 	}
 
@@ -391,7 +617,7 @@
 		const indexChange = Number(raw);
 
 		if (raw === '' || Number.isNaN(indexChange)) {
-			msg(out, 'warn', 'Enter a numeric index change, in points.');
+			msg(out, 'warn', 'Enter a numeric index change in points.');
 			return;
 		}
 
@@ -410,7 +636,7 @@
 		const body = await readJson(response);
 
 		if (!response.ok) {
-			msg(out, 'bad', (body && body.message) || ('Adjustment failed with status ' + response.status));
+			msg(out, 'bad', (body && body.message) || ('Repricing failed with status ' + response.status));
 			return;
 		}
 
