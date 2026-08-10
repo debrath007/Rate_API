@@ -17,6 +17,10 @@ public record ComplianceReport(
 		int accountsChecked,
 		int criticalCount,
 		int highCount,
+		/** Version of the rule file that produced this report. */
+		String rulesVersion,
+		/** Ids of the rules that actually ran; a disabled rule will not appear. */
+		List<String> rulesApplied,
 		List<ComplianceViolation> violations) {
 
 	public boolean isCompliant() {

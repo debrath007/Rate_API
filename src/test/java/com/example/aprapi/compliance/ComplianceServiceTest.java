@@ -60,27 +60,27 @@ class ComplianceServiceTest {
 		assertThat(report.status()).isEqualTo("compliant");
 		assertThat(report.violations()).isEmpty();
 		assertThat(report.isCompliant()).isTrue();
-		assertThat(report.rowsChecked()).isEqualTo(4);
-		assertThat(report.accountsChecked()).isEqualTo(2);
+		assertThat(report.rowsChecked()).isEqualTo(5);
+		assertThat(report.accountsChecked()).isEqualTo(3);
 		assertThat(report.checkedAt()).isNotBlank();
 	}
 
 	@Test
 	void exitCodeOneIsAValidReportNotAFailure() throws IOException {
 		// Violations make the script exit 1; that must be parsed, not treated as an error.
-		writeDriftedScraWorkbook();
+		writeBreachedScraWorkbook();
 
 		ComplianceReport report = service().check();
 
 		assertThat(report.status()).isEqualTo("violations_found");
 		assertThat(report.violations()).isNotEmpty();
-		assertThat(report.highCount()).isPositive();
+		assertThat(report.criticalCount()).isPositive();
 
 		ComplianceViolation violation = report.violations().get(0);
-		assertThat(violation.rule()).isEqualTo("SCRA_FIXED_RATE");
-		assertThat(violation.severity()).isEqualTo("HIGH");
+		assertThat(violation.rule()).isEqualTo("OVERRIDE_CODE_CEILING");
+		assertThat(violation.severity()).isEqualTo("CRITICAL");
 		assertThat(violation.expected()).isEqualTo(6.00);
-		assertThat(violation.actual()).isEqualTo(5.40);
+		assertThat(violation.actual()).isEqualTo(7.00);
 		assertThat(violation.message()).isNotBlank();
 	}
 
@@ -99,14 +99,18 @@ class ComplianceServiceTest {
 				.hasMessageContaining("Compliance script not found");
 	}
 
-	/** Drops the SCRA override from 6.00% to 5.40%, as a -10% adjustment would. */
-	private void writeDriftedScraWorkbook() throws IOException {
+	/**
+	 * Pushes the SCRA override from 6.00% to 7.00%, as an upward index movement does.
+	 * Above the cap rather than below it, because the cap is a ceiling: an account that
+	 * lands under 6.00% is charged the lower rate and is compliant.
+	 */
+	private void writeBreachedScraWorkbook() throws IOException {
 		org.apache.poi.ss.usermodel.Workbook wb;
 		try (InputStream is = Files.newInputStream(workbook)) {
 			wb = org.apache.poi.ss.usermodel.WorkbookFactory.create(is);
 		}
 		try (wb) {
-			wb.getSheetAt(0).getRow(2).getCell(5).setCellValue(0.054);
+			wb.getSheetAt(0).getRow(2).getCell(10).setCellValue(0.07);
 			try (var out = Files.newOutputStream(workbook)) {
 				wb.write(out);
 			}

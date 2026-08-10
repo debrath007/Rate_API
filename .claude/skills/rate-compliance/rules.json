@@ -1,0 +1,246 @@
+{
+  "version": "3.0",
+  "policy": "Credit-card APR rate policy",
+  "description": "Thresholds, severities and messages for the rate-compliance checks. This file is the source of truth for the policy; check_compliance.py supplies the evaluation logic and reads everything else from here. Each rule cites the APR product requirements it implements.",
+  "epsilon": 0.005,
+  "asOfDate": "2026-08-09",
+  "asOfDateComment": "Date the sheet is judged against, for rules that compare against expiry and protection dates. Pinned rather than taken from the clock so a report is reproducible.",
+  "epsilonComment": "Rates are held to two decimals, so compare with a tolerance. Exact float equality would manufacture violations out of representation error.",
+  "rules": [
+    {
+      "id": "OVERRIDE_CODE_CEILING",
+      "enabled": true,
+      "check": "override_code_ceiling",
+      "title": "Statutory rate ceilings for protected populations",
+      "requirements": ["APR-072", "APR-098", "APR-099", "APR-101", "APR-107", "APR-161", "APR-162"],
+      "description": "An account carrying a protected-population override code must not be charged above that code's ceiling. The ceiling is a maximum, not a fixed rate: where the normal formula produces something lower, the customer keeps the lower rate (APR-099, APR-107). Where several codes apply, the most protective — lowest — ceiling governs (APR-162).",
+      "params": {
+        "codeCeilings": {
+          "SCRA": 6.0,
+          "MLA": 36.0
+        }
+      },
+      "severity": {
+        "breach": "CRITICAL"
+      },
+      "messages": {
+        "breach": "{code} account effective rate is {actual:.2f}%, above the {ceiling:.2f}% cap for that protection"
+      }
+    },
+    {
+      "id": "MAX_APR_CAP",
+      "enabled": true,
+      "check": "max_apr_cap",
+      "title": "Disclosed maximum APR ceiling",
+      "requirements": ["APR-032", "APR-035", "APR-069", "APR-181"],
+      "description": "No card member may be charged above the ceiling disclosed in their cardholder agreement. Read per row from CeilingRate, falling back to defaultMaxRate when the column is absent. Judged on the effective rate only, so a normal rate above the cap that a lower override masks is not a breach.",
+      "params": {
+        "defaultMaxRate": 29.99
+      },
+      "severity": {
+        "breach": "CRITICAL"
+      },
+      "messages": {
+        "breach": "Effective rate is {actual:.2f}%, above the {max:.2f}% maximum APR this account may be charged"
+      }
+    },
+    {
+      "id": "RATE_FLOOR",
+      "enabled": true,
+      "check": "rate_floor",
+      "title": "Disclosed APR floor",
+      "requirements": ["APR-035"],
+      "description": "A variable rate must be clamped at the floor its agreement discloses, however far the index falls. Rows carrying an override are exempt: an override is a legitimate reason to sit below the floor, and applying it there would flag every SCRA and goodwill account.",
+      "params": {},
+      "severity": {
+        "breach": "HIGH"
+      },
+      "messages": {
+        "breach": "Effective rate is {actual:.2f}%, below the {floor:.2f}% floor disclosed for this account"
+      }
+    },
+    {
+      "id": "LOWER_RATE_WINS",
+      "enabled": true,
+      "check": "lower_rate_wins",
+      "title": "Lower of normal and override is charged",
+      "requirements": ["APR-087", "APR-093", "APR-095"],
+      "description": "Where an account has both a normal rate and an override rate, the lower of the two must be the effective rate. An override code declared with no rate behind it means the customer falls back to the full normal rate and loses the benefit they qualified for.",
+      "params": {},
+      "severity": {
+        "mismatch": "CRITICAL",
+        "missingOverrideRate": "HIGH"
+      },
+      "messages": {
+        "mismatch": "Effective rate is {actual:.2f}% but the lower of normal ({rate:.2f}%) and override ({overrideRate:.2f}%) is {expected:.2f}%",
+        "missingOverrideRate": "Override code {code} is set but no override rate is present, so the full normal rate of {rate:.2f}% is being charged"
+      }
+    },
+    {
+      "id": "RATE_MATCHES_FORMULA",
+      "enabled": true,
+      "check": "rate_matches_formula",
+      "title": "Stored rate matches index plus margin",
+      "requirements": ["APR-039", "APR-147", "APR-180"],
+      "description": "For a variable-rate account the stored APR must equal Index + Margin, rounded to the disclosed precision. A drift between the derived and the stored value means the charged rate no longer matches the method that was disclosed. Applies to the normal rate, independently of any override.",
+      "params": {
+        "basis": "VARIABLE",
+        "precision": 2
+      },
+      "severity": {
+        "drift": "HIGH"
+      },
+      "messages": {
+        "drift": "Stored rate is {actual:.2f}% but index ({index:.2f}%) plus margin ({margin:.2f}%) derives {expected:.2f}%"
+      }
+    },
+    {
+      "id": "RATE_SANITY",
+      "enabled": true,
+      "check": "rate_sanity",
+      "title": "Rates are within a sane range",
+      "requirements": ["APR-019", "APR-034", "APR-037"],
+      "description": "A negative rate, or one beyond any plausible ceiling, means a bad index value or an uninitialised variable reached the rate table rather than a real pricing decision. Caught separately from the policy ceilings so it reads as a data-integrity failure rather than an overcharge.",
+      "params": {
+        "minRate": 0.0,
+        "absurdRate": 100.0
+      },
+      "severity": {
+        "negative": "CRITICAL",
+        "absurd": "CRITICAL"
+      },
+      "messages": {
+        "negative": "Effective rate is {actual:.2f}%, below the minimum plausible rate of {min:.2f}%",
+        "absurd": "Effective rate is {actual:.2f}%, beyond the {absurd:.2f}% sanity ceiling - suspect a bad index value"
+      }
+    },
+    {
+      "id": "CONSISTENT_DAY_COUNT",
+      "enabled": true,
+      "check": "config_matches",
+      "title": "Day-count divisor is uniform across the portfolio",
+      "requirements": ["APR-041"],
+      "description": "Interest must be computed on one day-count basis. A 360-day divisor where 365 was disclosed overcharges every day of every cycle, and the discrepancy is invisible in any single account.",
+      "params": {
+        "field": "dayCountBasis",
+        "expected": "365"
+      },
+      "severity": {
+        "mismatch": "CRITICAL"
+      },
+      "messages": {
+        "mismatch": "Day-count basis is {got}, but policy computes interest on {want}"
+      }
+    },
+    {
+      "id": "CONSISTENT_COMPOUNDING",
+      "enabled": true,
+      "check": "config_matches",
+      "title": "Compounding frequency is uniform across the portfolio",
+      "requirements": ["APR-046"],
+      "description": "Interest-on-interest frequency must match what was disclosed. An account compounding daily where monthly was disclosed accrues more than the customer agreed to.",
+      "params": {
+        "field": "compoundingFrequency",
+        "expected": "DAILY"
+      },
+      "severity": {
+        "mismatch": "CRITICAL"
+      },
+      "messages": {
+        "mismatch": "Compounding frequency is {got}, but policy discloses {want}"
+      }
+    },
+    {
+      "id": "CONSISTENT_ROUNDING",
+      "enabled": true,
+      "check": "config_matches",
+      "title": "Rounding rule is uniform across the portfolio",
+      "requirements": ["APR-043", "APR-048"],
+      "description": "Half-up and half-even rounding diverge by a penny per cycle in one direction only, which accumulates across a portfolio into a systematic bias rather than noise.",
+      "params": {
+        "field": "roundingRule",
+        "expected": "HALF_UP"
+      },
+      "severity": {
+        "mismatch": "HIGH"
+      },
+      "messages": {
+        "mismatch": "Rounding rule is {got}, but policy rounds {want}"
+      }
+    },
+    {
+      "id": "OVERRIDE_NOT_EXPIRED",
+      "enabled": true,
+      "check": "override_not_expired",
+      "title": "Expired overrides have reverted",
+      "requirements": ["APR-088", "APR-094"],
+      "description": "A temporary rate arrangement must revert on its expiry date to whatever legitimately applies then. An override still in force past its expiry is a rate nobody re-authorised.",
+      "params": {},
+      "severity": {
+        "expired": "HIGH"
+      },
+      "messages": {
+        "expired": "Override {code} expired on {expiry} but is still applied as of {asOf}"
+      }
+    },
+    {
+      "id": "PROTECTION_DATES_VALID",
+      "enabled": true,
+      "check": "protection_dates_valid",
+      "title": "Protected-population caps have a valid protection period",
+      "requirements": ["APR-103", "APR-105"],
+      "description": "A statutory cap needs an evidenced protection period. No start date means the cap cannot be substantiated; a cap still applied after the period ended means the reversion never ran.",
+      "params": {
+        "protectedCodes": ["SCRA", "MLA"]
+      },
+      "severity": {
+        "missingStart": "HIGH",
+        "endedButApplied": "HIGH"
+      },
+      "messages": {
+        "missingStart": "{code} cap is applied but no protection start date is recorded",
+        "endedButApplied": "{code} protection ended on {end} but the cap is still applied as of {asOf}"
+      }
+    },
+    {
+      "id": "PRE_SERVICE_DEBT_SCOPE",
+      "enabled": true,
+      "check": "pre_service_debt_scope",
+      "title": "Statutory caps apply to pre-service debt only",
+      "requirements": ["APR-100"],
+      "description": "The SCRA cap covers obligations incurred before active duty began. Applying it to balances opened after activation extends the protection beyond what the statute grants.",
+      "params": {
+        "protectedCodes": ["SCRA"]
+      },
+      "severity": {
+        "postActivation": "HIGH"
+      },
+      "messages": {
+        "postActivation": "{code} cap is applied to debt originated {origination}, on or after protection began {start}"
+      }
+    },
+    {
+      "id": "BOUNDS_WITHIN_PRODUCT_RANGE",
+      "enabled": true,
+      "check": "bounds_within_product_range",
+      "title": "Account bounds sit inside the product's disclosed range",
+      "requirements": ["APR-073", "APR-112"],
+      "description": "The rate range marketed for a product must bound every rate the system can assign under it. An account configured outside that range can be charged a rate that was never disclosed to them.",
+      "params": {
+        "productRanges": {
+          "CORE": [9.99, 29.99],
+          "COBRAND": [9.99, 32.99],
+          "PRIVATE": [0.0, 36.0]
+        }
+      },
+      "severity": {
+        "outsideRange": "HIGH",
+        "unknownProduct": "HIGH"
+      },
+      "messages": {
+        "outsideRange": "Account bounds {floor:.2f}%-{ceiling:.2f}% fall outside the {product} disclosed range of {low:.2f}%-{high:.2f}%",
+        "unknownProduct": "Product code {product} has no disclosed rate range configured"
+      }
+    }
+  ]
+}

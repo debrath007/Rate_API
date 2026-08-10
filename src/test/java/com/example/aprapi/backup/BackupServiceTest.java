@@ -57,20 +57,20 @@ class BackupServiceTest {
 
 	@Test
 	void adjustAllRates_takesABackupBeforeMutating() {
-		String backupName = rateService.adjustAllRates(-10.0).backupFile();
+		String backupName = rateService.adjustAllRates(-1.0).backupFile();
 
 		assertThat(backupName).isNotBlank();
 		assertThat(tempDir.resolve("backups").resolve(backupName)).exists();
 		// The live workbook moved, so the backup must hold the pre-adjust value.
 		assertThat(rateService.getRatesForAccount("ACC00001").rates().get(0).rate())
-				.isCloseTo(9.00, within(0.001));
+				.isCloseTo(9.00, within(0.001)); // index 7.25 + margin 1.75
 	}
 
 	@Test
 	void restoreLatest_returnsTheWorkbookToItsPreAdjustState() {
 		double before = rateService.getRatesForAccount("ACC00001").rates().get(0).rate();
 
-		rateService.adjustAllRates(-10.0);
+		rateService.adjustAllRates(-1.0);
 		assertThat(rateService.getRatesForAccount("ACC00001").rates().get(0).rate())
 				.isNotCloseTo(before, within(0.001));
 

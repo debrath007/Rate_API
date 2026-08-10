@@ -24,10 +24,15 @@ public class ExcelAprRepository {
 
 	private static final int COL_ACCOUNT_ID = 0;
 	private static final int COL_RATE_TYPE = 1;
-	private static final int COL_RATE = 2;
-	private static final int COL_BALANCE = 3;
-	private static final int COL_OVERRIDE_CODE = 4;
-	private static final int COL_OVERRIDE_RATE = 5;
+	private static final int COL_SCENARIO = 2;
+	private static final int COL_RATE_BASIS = 3;
+	private static final int COL_INDEX = 4;
+	private static final int COL_MARGIN = 5;
+	private static final int COL_RATE = 6;
+	private static final int COL_FLOOR_RATE = 7;
+	private static final int COL_CEILING_RATE = 8;
+	private static final int COL_OVERRIDE_CODE = 9;
+	private static final int COL_OVERRIDE_RATE = 10;
 	private static final int HEADER_ROW_INDEX = 0;
 
 	private final ExcelProperties excelProperties;
@@ -55,10 +60,10 @@ public class ExcelAprRepository {
 	}
 
 	/**
-	 * Updates the effective-rate cell (Rate or OverrideRate, per {@link AprRecord#effectiveRateIsOverride()})
+	 * Writes back the columns a rate movement can change -- Index, Rate and OverrideRate --
 	 * for each given record, in a single open/save pass, and returns the number of rows updated.
 	 */
-	public int updateEffectiveRates(List<AprRecord> updates) {
+	public int updateRates(List<AprRecord> updates) {
 		if (updates.isEmpty()) {
 			return 0;
 		}
@@ -78,13 +83,9 @@ public class ExcelAprRepository {
 					if (row == null) {
 						continue;
 					}
-					int targetCol = record.effectiveRateIsOverride() ? COL_OVERRIDE_RATE : COL_RATE;
-					double newValue = record.effectiveRateIsOverride() ? record.getOverrideRate() : record.getRate();
-					Cell cell = row.getCell(targetCol);
-					if (cell == null) {
-						cell = row.createCell(targetCol);
-					}
-					cell.setCellValue(newValue / 100.0);
+					writeRate(row, COL_INDEX, record.getIndex());
+					writeRate(row, COL_RATE, record.getRate());
+					writeRate(row, COL_OVERRIDE_RATE, record.getOverrideRate());
 				}
 				try (var fos = new FileOutputStream(file)) {
 					workbook.write(fos);
@@ -96,15 +97,37 @@ public class ExcelAprRepository {
 		}
 	}
 
+	/** Writes a percentage number back as the fraction the sheet stores, or leaves a blank cell blank. */
+	private void writeRate(Row row, int column, Double percentValue) {
+		if (percentValue == null) {
+			return;
+		}
+		Cell cell = row.getCell(column);
+		if (cell == null) {
+			cell = row.createCell(column);
+		}
+		cell.setCellValue(percentValue / 100.0);
+	}
+
 	private AprRecord toRecord(Row row) {
-		String accountId = stringValue(row.getCell(COL_ACCOUNT_ID));
-		String rateType = stringValue(row.getCell(COL_RATE_TYPE));
-		double rate = numericValue(row.getCell(COL_RATE)) * 100.0;
-		double balance = numericValue(row.getCell(COL_BALANCE));
-		String overrideCode = stringValue(row.getCell(COL_OVERRIDE_CODE));
-		Cell overrideRateCell = row.getCell(COL_OVERRIDE_RATE);
-		Double overrideRate = isBlankCell(overrideRateCell) ? null : numericValue(overrideRateCell) * 100.0;
-		return new AprRecord(row.getRowNum(), accountId, rateType, rate, balance, overrideCode, overrideRate);
+		return new AprRecord(
+				row.getRowNum(),
+				stringValue(row.getCell(COL_ACCOUNT_ID)),
+				stringValue(row.getCell(COL_RATE_TYPE)),
+				stringValue(row.getCell(COL_SCENARIO)),
+				stringValue(row.getCell(COL_RATE_BASIS)),
+				percentValue(row.getCell(COL_INDEX)),
+				percentValue(row.getCell(COL_MARGIN)),
+				numericValue(row.getCell(COL_RATE)) * 100.0,
+				percentValue(row.getCell(COL_FLOOR_RATE)),
+				percentValue(row.getCell(COL_CEILING_RATE)),
+				stringValue(row.getCell(COL_OVERRIDE_CODE)),
+				percentValue(row.getCell(COL_OVERRIDE_RATE)));
+	}
+
+	/** Rate-like cell as a percentage number, or null when the cell is blank. */
+	private Double percentValue(Cell cell) {
+		return isBlankCell(cell) ? null : numericValue(cell) * 100.0;
 	}
 
 	private boolean isBlankCell(Cell cell) {
