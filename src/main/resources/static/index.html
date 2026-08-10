@@ -441,6 +441,10 @@
 				<svg viewBox="0 0 24 24"><rect x="4.5" y="3.5" width="15" height="17" rx="2.2"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5"/></svg>
 				Run tests
 			</button>
+			<button class="navitem" data-tab="requirements" type="button">
+				<svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M15 3.5v4h4"/><path d="M9 12h6M9 15.5h6"/></svg>
+				Requirements
+			</button>
 		</nav>
 	</aside>
 
@@ -496,11 +500,13 @@
 			<div class="panel">
 				<h2>Rate policy compliance</h2>
 				<p class="hint">
-					Checks the workbook against six policy rules: statutory ceilings for protected accounts
-					(SCRA 6.00%, MLA 36.00%), each account's own disclosed floor and ceiling,
-					lower-of-normal-or-override, rate derived from index plus margin, and a sanity range.
-					The rules live in <code>rules.json</code>. The SME review adds an expert reading of the
-					findings &mdash; it calls the Claude CLI, takes around 30 seconds, and consumes API tokens.
+					Checks the workbook against the policy in <code>rules.json</code>: statutory ceilings
+					for protected accounts (SCRA 6.00%, MLA 36.00%), each account's own disclosed floor
+					and ceiling, lower-of-normal-or-override, rate derived from index plus margin, a
+					sanity range, uniform interest mechanics, override expiry, protection periods, and
+					product rate ranges. The rules applied are listed under each report. The SME review
+					adds an expert reading of the findings &mdash; it calls the Claude CLI, takes around
+					30 seconds, and consumes API tokens.
 				</p>
 				<div class="row">
 					<button id="checkComplianceBtn">Check compliance</button>
@@ -527,6 +533,40 @@
 					<button id="runTestsBtn">Run tests</button>
 				</div>
 				<div class="out" id="testOut"></div>
+			</div>
+		</section>
+
+		<!-- 6. Requirements -->
+		<section class="tabpanel" id="tab-requirements">
+			<div class="panel">
+				<h2>Product requirements</h2>
+				<p class="hint">
+					Every requirement from the product document, bucketed by the event that triggers it.
+					A requirement is <em>implemented</em> when it traces to an enabled rule that some row in
+					the workbook actually exercises. The rest are not omitted &mdash; each says what it is
+					blocked on. Most describe behaviour over time, which a spreadsheet cannot answer.
+				</p>
+				<div class="row">
+					<label for="reqEvent">Event</label>
+					<select id="reqEvent"><option value="">All events</option></select>
+					<label for="reqStatus">Status</label>
+					<select id="reqStatus">
+						<option value="">All statuses</option>
+						<option value="implemented">Implemented</option>
+						<option value="needs_schema">Needs schema</option>
+						<option value="needs_simulator">Needs simulator</option>
+						<option value="not_data_testable">Not data testable</option>
+					</select>
+					<label for="reqPriority">Priority</label>
+					<select id="reqPriority">
+						<option value="">All priorities</option>
+						<option value="Critical">Critical</option>
+						<option value="High">High</option>
+						<option value="Medium">Medium</option>
+						<option value="Low">Low</option>
+					</select>
+				</div>
+				<div class="out" id="requirementsOut"></div>
 			</div>
 		</section>
 	</main>
@@ -685,17 +725,34 @@
 	}
 
 	// ---- 4. Compliance ----------------------------------------------------------
+	/**
+	 * Which policy produced this report. Worth showing: a clean result means nothing
+	 * unless you can see how many rules ran and which version of the policy they came
+	 * from -- a disabled rule and a passing rule look identical from the outside.
+	 */
+	function renderRuleset(report) {
+		const applied = report.rulesApplied || [];
+		if (!applied.length) {
+			return '';
+		}
+		return '<p class="hint" style="margin:10px 0 0">Policy <code>rules.json</code> v'
+			+ esc(report.rulesVersion || '?') + ' &mdash; ' + applied.length + ' rules applied: '
+			+ applied.map((r) => '<code>' + esc(r) + '</code>').join(' ') + '</p>';
+	}
+
 	/** Renders the deterministic report. Shared by both buttons so findings look identical. */
 	function renderReport(report) {
 		if (!report.violations.length) {
 			return '<div class="msg ok">Compliant &mdash; ' + report.rowsChecked + ' rows across '
-				+ report.accountsChecked + ' accounts, no policy violations.</div>';
+				+ report.accountsChecked + ' accounts, no policy violations.</div>'
+				+ renderRuleset(report);
 		}
 
 		const rows = report.violations.map((v) =>
 			'<tr>' +
 			'<td><span class="pill ' + esc(v.severity) + '">' + esc(v.severity) + '</span></td>' +
 			'<td>' + esc(v.accountId) + '</td>' +
+			'<td>' + esc(v.scenario || '') + '</td>' +
 			'<td>' + esc(v.rateType) + '</td>' +
 			'<td><code>' + esc(v.rule) + '</code></td>' +
 			'<td class="num">' + (v.expected === null ? '&mdash;' : v.expected.toFixed(2) + '%') + '</td>' +
@@ -706,9 +763,10 @@
 		return '<div class="msg bad">' + report.violations.length + ' policy violation(s) &mdash; '
 			+ report.criticalCount + ' critical, ' + report.highCount + ' high &mdash; across '
 			+ report.rowsChecked + ' rows.</div>' +
-			'<table><thead><tr><th>Severity</th><th>Account</th><th>Rate type</th><th>Rule</th>' +
-			'<th style="text-align:right">Expected</th><th style="text-align:right">Actual</th>' +
-			'<th>Detail</th></tr></thead><tbody>' + rows + '</tbody></table>';
+			'<table><thead><tr><th>Severity</th><th>Account</th><th>Scenario</th><th>Rate type</th>' +
+			'<th>Rule</th><th style="text-align:right">Expected</th>' +
+			'<th style="text-align:right">Actual</th><th>Detail</th></tr></thead><tbody>'
+			+ rows + '</tbody></table>' + renderRuleset(report);
 	}
 
 	async function checkCompliance() {
@@ -803,6 +861,102 @@
 		out.innerHTML = html;
 	}
 
+	// ---- 6. Requirements --------------------------------------------------------
+	/** Loaded once and filtered in the browser; the catalogue is static per build. */
+	let requirements = [];
+
+	const STATUS_LABEL = {
+		implemented: 'Implemented',
+		needs_schema: 'Needs schema',
+		needs_simulator: 'Needs simulator',
+		not_data_testable: 'Not data testable'
+	};
+
+	function countBy(items, key) {
+		return items.reduce((acc, item) => {
+			acc[item[key]] = (acc[item[key]] || 0) + 1;
+			return acc;
+		}, {});
+	}
+
+	function renderRequirements() {
+		const out = $('requirementsOut');
+		const event = $('reqEvent').value;
+		const status = $('reqStatus').value;
+		const priority = $('reqPriority').value;
+
+		const shown = requirements.filter((r) =>
+			(!event || r.event === event)
+			&& (!status || r.status === status)
+			&& (!priority || r.priority === priority));
+
+		const done = requirements.filter((r) => r.status === 'implemented').length;
+		const total = requirements.length;
+		const byStatus = countBy(requirements, 'status');
+
+		// Coverage is stated against the whole catalogue, not the filtered view, so a
+		// filter cannot make the number look better than it is.
+		let html = '<div class="msg ' + (done ? 'ok' : 'warn') + '">'
+			+ done + ' of ' + total + ' requirements executable today ('
+			+ Math.round((done / total) * 100) + '%) &mdash; '
+			+ Object.keys(byStatus).sort().map((k) =>
+				(STATUS_LABEL[k] || k) + ' ' + byStatus[k]).join(', ')
+			+ '</div>';
+
+		html += '<p class="hint" style="margin:10px 0">Showing ' + shown.length
+			+ ' of ' + total + '.</p>';
+
+		if (!shown.length) {
+			out.innerHTML = html;
+			return;
+		}
+
+		const rows = shown.map((r) => {
+			const trace = r.status === 'implemented'
+				? r.rules.map((x) => '<code>' + esc(x) + '</code>').join(' ')
+				: esc(r.blockedOn || '');
+			return '<tr>' +
+				'<td><code>' + esc(r.id) + '</code></td>' +
+				'<td>' + esc(r.priority) + '</td>' +
+				'<td><code>' + esc(r.event) + '</code></td>' +
+				'<td><span class="pill ' + (r.status === 'implemented' ? 'passed' : 'skipped')
+				+ '">' + esc(STATUS_LABEL[r.status] || r.status) + '</span></td>' +
+				'<td>' + esc(r.title) + '</td>' +
+				'<td>' + esc(r.when) + '</td>' +
+				'<td>' + esc(r.then) + '</td>' +
+				'<td>' + trace + '</td>' +
+				'</tr>';
+		}).join('');
+
+		out.innerHTML = html +
+			'<table><thead><tr><th>Requirement</th><th>Priority</th><th>Event</th><th>Status</th>' +
+			'<th>Title</th><th>When</th><th>Then</th><th>Implemented by / blocked on</th>' +
+			'</tr></thead><tbody>' + rows + '</tbody></table>';
+	}
+
+	async function loadRequirements() {
+		const out = $('requirementsOut');
+		const response = await fetch('/api/requirements');
+		const body = await readJson(response);
+
+		if (!response.ok || !body || !body.requirements) {
+			msg(out, 'bad', (body && body.message)
+				|| ('Could not load requirements (status ' + response.status + ').'));
+			return;
+		}
+
+		requirements = body.requirements;
+
+		const events = [...new Set(requirements.map((r) => r.event))].sort();
+		const select = $('reqEvent');
+		const counts = countBy(requirements, 'event');
+		select.innerHTML = '<option value="">All events (' + requirements.length + ')</option>'
+			+ events.map((e) =>
+				'<option value="' + esc(e) + '">' + esc(e) + ' (' + counts[e] + ')</option>').join('');
+
+		renderRequirements();
+	}
+
 	// ---- Wiring -----------------------------------------------------------------
 	$('fetchBtn').addEventListener('click', () => withBusy($('fetchBtn'), 'Fetching', fetchRates));
 	$('accountId').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('fetchBtn').click(); });
@@ -812,8 +966,11 @@
 	$('checkComplianceBtn').addEventListener('click', () => withBusy($('checkComplianceBtn'), 'Checking', checkCompliance));
 	$('reviewBtn').addEventListener('click', () => withBusy($('reviewBtn'), 'Reviewing', reviewCompliance));
 	$('runTestsBtn').addEventListener('click', () => withBusy($('runTestsBtn'), 'Running', runTests));
+	['reqEvent', 'reqStatus', 'reqPriority'].forEach(
+		(id) => $(id).addEventListener('change', renderRequirements));
 
 	loadBackups();
+	loadRequirements();
 </script>
 </body>
 </html>
