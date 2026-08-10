@@ -1,7 +1,5 @@
 package com.example.aprapi.service;
 
-import com.example.aprapi.backup.BackupService;
-import com.example.aprapi.backup.WorkbookLock;
 import com.example.aprapi.config.ExcelProperties;
 import com.example.aprapi.dto.AccountRatesResponse;
 import com.example.aprapi.exception.AccountNotFoundException;
@@ -36,8 +34,7 @@ class AprRateServiceTest {
 			Files.copy(fixture, workbookCopy);
 		}
 		ExcelProperties properties = new ExcelProperties(workbookCopy.toString());
-		service = new AprRateService(
-				new ExcelAprRepository(properties), new BackupService(properties), new WorkbookLock());
+		service = new AprRateService(new ExcelAprRepository(properties));
 	}
 
 	@Test

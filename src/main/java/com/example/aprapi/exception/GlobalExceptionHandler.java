@@ -1,6 +1,5 @@
 package com.example.aprapi.exception;
 
-import com.example.aprapi.compliance.ComplianceCheckException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -29,12 +28,6 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(ExcelAccessException.class)
 	public ResponseEntity<Map<String, Object>> handleExcelAccess(ExcelAccessException ex) {
-		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-				.body(errorBody(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage()));
-	}
-
-	@ExceptionHandler(ComplianceCheckException.class)
-	public ResponseEntity<Map<String, Object>> handleComplianceCheck(ComplianceCheckException ex) {
 		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
 				.body(errorBody(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage()));
 	}
